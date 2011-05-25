@@ -12,7 +12,7 @@ else
   build = Makr::Build.new(buildDir)
   build.globalConfig.includePaths += " -I" + localDir + "/src"
 
-  myProgramTask = Makr::ProgramGenerator.generate(localDir + "/src/", "*.cpp", build, buildDir + "/myProgram")
+  myProgramTask = Makr::ProgramGenerator.generate(localDir + "/src/", "*.{cpp,cxx,c}", build, buildDir + "/myProgram")
 
   updateTraverser = Makr::UpdateTraverser.new(1)
   updateTraverser.traverse(myProgramTask)
