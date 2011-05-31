@@ -115,14 +115,7 @@ module Makr
     end
   end
 
-  # end of thread pool implementation ############################################################
-
-
-
-
-
-
-
+  # end of thread pool implementation ########################################################################################
 
 
   
@@ -193,38 +186,56 @@ module Makr
     def initialize(fileName)  # absolute path for fileName expected!
       @fileName = fileName.strip
       super(@fileName)
-      puts "[makr] New FileTask for file: \"" + @fileName + "\""
-      # already load file attribs
-      @time = File.stat(@fileName).mtime
-      @size = File.stat(@fileName).size
-      # we dont calculate the hash here because we want the file to appear as updated the first time
-      # and have the hash when loading the taskHash from File (also it saves computation)      
+      # all file attribs stay uninitialized, so that first call to update returns true
     end
 
     
     def update()
-      puts "[makr] FileTask: Updating: " + @fileName
+      retValue = false
       curTime = File.stat(@fileName).mtime
       if(@time != curTime)
         @time = curTime
-        return true
+        puts "[makr] FileTask, mtime changed: " + @fileName
+        retValue = true
       end
       curSize = File.stat(@fileName).size
       if(@size != curSize)
         @size = curSize
-        return true
+        puts "[makr] FileTask, size changed: " + @fileName
+        retValue = true
       end
       curHash = MD5.new(open(@fileName, 'rb').read).hexdigest
       if(@fileHash != curHash)
         @fileHash = curHash
-        return true
+        puts "[makr] FileTask, md5 changed: " + @fileName
+        retValue = true
       end
-      return false
+      return retValue
     end
   end
 
-  
 
+  
+  
+  # This class not only checks for file attributes on update but also return true in update(), when the
+  # file does not exist at all (a FileTask
+  class FileExistenceTask < FileTask
+
+    def initialize(fileName)
+      super(@fileName)
+    end
+
+    def update()
+      if (not File.file?(@fileName))
+        return true
+      else
+        super.update()
+      end
+    end
+  end
+
+
+  
 
   # can be attached to a Build as globalConfig, to a CompileTask or a BuildTask as specific config
   class Config
@@ -246,6 +257,7 @@ module Makr
   # input files are dependencies on FileTasks
   class CompileTask < Task
 
+    # class vars and functions
     @@checkOnlyUserHeaders = false
     def self.checkOnlyUserHeaders()
       @@checkOnlyUserHeaders
@@ -258,20 +270,30 @@ module Makr
 
 
     # the absolute path of the input and output file of the compilation
-    attr_reader :fileName, :objectFileName
-    # a config may be specific Config per CompileTask, default is to copy build.globalConfig
-    attr_accessor :config
-
+    attr_reader :fileName, :objectFileName, :compileTarget
     
-    # buildSetup contains the global configuration, see class BuildSetup (preprocessor-relevant things etc.)
+    # build contains the global configuration, see Build.globalConfig and class Config
     def initialize(fileName, build)
       @fileName = fileName.strip
       @build = build
       @objectFileName = CompileTask.makeObjectFileName(@fileName, @build.buildPath)
-      super(@objectFileName) # the objectFileName is the unique identifier used here, as we're defining a FileTask
-                             # as dependency to the given fileName too and we want to be unique with this task
-      @config = @build.globalConfig.clone
+      # now we need a unique name for this task. As we're defining a FileTask as dependency to fileName
+      # and a FileExistenceTask on the @objectFileName to ensure a build of the target if it was deleted or
+      # otherwise modified (whatever you can think of here), we create a unique name out of the unique name
+      # of @objectFileName and a suffix
+      super(@objectFileName + "__CompileTask")
+      @compileTarget = FileExistenceTask.new(@objectFileName)
+      addDependency(@compileTarget)
+      @config = @build.globalConfig
       buildDependencies()
+    end
+
+    # a config may be a specific config per CompileTask, default is to reference build.globalConfig
+    # and as we are retrieving the object from a marshal dump, we need to take extra care, that the global
+    # config is only copied, if needed, that is, this local file has a config on its own, which is what happens
+    # once this function is called
+    def getLocalConfig
+      @config = @config.clone
     end
 
     
@@ -325,7 +347,12 @@ module Makr
       compileCommand = @config.compilerCommand + " -c " + @config.cFlags + " " + @config.defines + " " \
                        + @config.includePaths + " " + @fileName + " -o " + @objectFileName
       puts "[makr] Executing compiler in CompileTask: \"" + @fileName + "\"\n\t" + compileCommand
-      system(compileCommand)
+      successful = system(compileCommand)
+      if not successful
+        puts "\n\n\n\nerror, exiting build process\n\n\n"
+        Kernel.exit!(1)
+      end
+      @compileTarget.update() # we call this to update file information on the compiled target
       return true # this task always is updated
     end
     
@@ -413,12 +440,13 @@ module Makr
     
     def loadTaskHash()
       puts "[makr] trying to read task hash from " + @taskHashFile
-      if File.exists?(@taskHashFile)
-        puts "[makr] could open file, now restoring tashHash\n\n"
-        dumpFile = File.open(@taskHashFile, "r")
-        @taskHash = Marshal.load(dumpFile)
+      if File.file?(@taskHashFile)
+        puts "[makr] found taskHash file, now restoring\n\n"
+        File.open(@taskHashFile, "rb") do |dumpFile|
+          @taskHash = Marshal.load(dumpFile)
+        end
       else
-        puts "[makr] could not open file\n\n"
+        puts "\n\n[makr] could not find or open taskHash file, tasks will be setup new!\n\n"
       end
     end
 
@@ -427,8 +455,9 @@ module Makr
       # first cleanup task hash (remove tasks with no dependants and dependencies, "dangling tasks")
       # then dump the hash using Marshal.dump
       @taskHash.delete_if { |name, task| task.dependencies.empty? }
-      dumpFile = File.open(@taskHashFile, "w")
-      Marshal.dump(@taskHash, dumpFile)
+      File.open(@taskHashFile, "wb") do |dumpFile|
+        Marshal.dump(@taskHash, dumpFile)
+      end
     end
 
 
@@ -441,7 +470,8 @@ module Makr
 
 
 
-
+we want to refine the task generator to be a client to the Find module and reduce the interface to the proper
+  handling of a single file given the parameters it needs (at least a Build object)
 
 
   class RecursiveCompileTaskGenerator
@@ -583,6 +613,11 @@ module Makr
     
   end
 
+  # just a convenience function, loads a Makrfile.rb from the given subDir and executes it
+  def makeSubDir(subDir)
+    $makrFilePath = subDir + "/Makrfile.rb"
+    Kernel.load($makrFilePath)
+  end
 
 end     # end of module makr
 
@@ -596,6 +631,7 @@ puts "makr version 2011.5.22" # just give short version notice on every startup 
 
 # set global vars available to the code in the Makrfile and each dependent Makrfile based on the command line
 # arguments to this script, everything that begins with a "$" in the following is available to client code in Makrfile.rb
+$makrProgram = $0
 $makrFilePath = Dir.pwd + "/Makrfile.rb"
 $commandLineArgs = ARGV
 # now we load the Makrfiles and use Kernel.load on them to execute them as ruby scripts
