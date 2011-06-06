@@ -187,10 +187,12 @@ module Makr
       @fileName = fileName.strip
       super(@fileName)
       # all file attribs stay uninitialized, so that first call to update returns true
+      @time = @size = @fileHash = String.new
     end
 
     
     def update()
+      print "[makr] checkin FileTask " + fileName + "  "
       retValue = false
       curTime = File.stat(@fileName).mtime
       if(@time != curTime)
@@ -200,16 +202,17 @@ module Makr
       end
       curSize = File.stat(@fileName).size
       if(@size != curSize)
+        #puts "[makr] FileTask, size changed: " + @fileName + " oldSize = " + @size + " newSize = " + curSize
         @size = curSize
-        puts "[makr] FileTask, size changed: " + @fileName
         retValue = true
       end
       curHash = MD5.new(open(@fileName, 'rb').read).hexdigest
       if(@fileHash != curHash)
+        puts "[makr] FileTask, hash changed: " + @fileName + " oldHash = " + @fileHash #+ " newSize = " + curHash
         @fileHash = curHash
-        puts "[makr] FileTask, md5 changed: " + @fileName
         retValue = true
       end
+      puts retValue
       return retValue
     end
   end
@@ -222,14 +225,16 @@ module Makr
   class FileExistenceTask < FileTask
 
     def initialize(fileName)
-      super(@fileName)
+      puts "new file existence task: " + fileName
+      super(fileName)
     end
 
     def update()
+      puts "checking file existence task: " + @fileName
       if (not File.file?(@fileName))
-        return true
+        return true;
       else
-        super.update()
+        return super
       end
     end
   end
@@ -283,7 +288,7 @@ module Makr
       # of @objectFileName and a suffix
       super(@objectFileName + "__CompileTask")
       @compileTarget = FileExistenceTask.new(@objectFileName)
-      addDependency(@compileTarget)
+      build.taskHash[@objectFileName] = @compileTarget
       @config = @build.globalConfig
       buildDependencies()
     end
@@ -337,6 +342,8 @@ module Makr
           addDependency(task) # dependencies cannot contain task if everything is coded right
         end
       end
+      # need to do this or the compile task dep will be lost each time we build them deps here
+      addDependency(@compileTarget)                                    
     end
 
     
@@ -353,7 +360,7 @@ module Makr
         Kernel.exit!(1)
       end
       @compileTarget.update() # we call this to update file information on the compiled target
-      return true # this task always is updated
+      return true # right now, we are always true (we could check for target equivalence or something else)
     end
     
   end
@@ -408,7 +415,7 @@ module Makr
     def update()
       # build compiler command and execute it
       compileCommand = @build.globalConfig.compilerCommand + " " + @lFlags + " " + @libPaths + " " + @libs + " -o " + @programName
-      @dependencies.each {|dep| compileCommand += " " + dep.name}
+      @dependencies.each {|dep| compileCommand += " " + dep.objectFileName}
       puts "[makr] Building programTask \"" + @name + "\"\n\t" + compileCommand
       system(compileCommand)
       return true # this is always updated
@@ -470,8 +477,8 @@ module Makr
 
 
 
-we want to refine the task generator to be a client to the Find module and reduce the interface to the proper
-  handling of a single file given the parameters it needs (at least a Build object)
+#we want to refine the task generator to be a client to the Find module and reduce the interface to the proper
+ # handling of a single file given the parameters it needs (at least a Build object)
 
 
   class RecursiveCompileTaskGenerator
@@ -489,7 +496,7 @@ we want to refine the task generator to be a client to the Find module and reduc
       # recurse
       subDirs = Dir['*/']
       subDirs.each {|subDir|
-                    puts "[makr] recursing into subdir: " + subDir
+                    #puts "[makr] recursing into subdir: " + subDir
                     recursiveGenerate(dirName + subDir, pattern, build, compileTasksArray)
                    } 
 
@@ -499,17 +506,19 @@ we want to refine the task generator to be a client to the Find module and reduc
                        fullFileName = (dirName + fileName).strip
                        objectFileName = CompileTask.makeObjectFileName(fullFileName, build.buildPath)
                        if not build.taskHash.has_key?(objectFileName)
-                         puts "[makr] making NEW compile task for file: \"" + fullFileName + "\""
+                         #puts "[makr] making NEW compile task for file: \"" + fullFileName + "\""
                          build.taskHash[objectFileName] = CompileTask.new(fullFileName, build)
                        end
                        compileTasksArray.push(build.taskHash[objectFileName])
                       }
-      puts "[makr] returning from subdir: " + dirName
+      #puts "[makr] returning from subdir: " + dirName
       Dir.chdir("..")
     end
   end
 
 
+
+  
   class ProgramGenerator
     def self.generate(dirName, pattern, build, progName)
       recursiveCompileTaskGenerator = RecursiveCompileTaskGenerator.new
@@ -541,14 +550,14 @@ we want to refine the task generator to be a client to the Find module and reduc
       
       def run()
         logTaskID = @task.to_s + @task.name
-        puts "[makr] Started task " + logTaskID + " in a thread, now locking"
+        #puts "[makr] Started task " + logTaskID + " in a thread, now locking"
         @task.mutex.synchronize do
           if not @task.updateMark
             raise "Unexpectedly starting on a task that needs no update!"
           end
           retVal = @task.update()
           @task.updateMark = false
-          puts "[makr] " + logTaskID + ": updated with result: " + retVal.to_s + ", checking dependant tasks: " + @task.dependantTasks.size.to_s
+         # puts "[makr] " + logTaskID + ": updated with result: " + retVal.to_s + ", checking dependant tasks: " + @task.dependantTasks.size.to_s
           #return
           @task.dependantTasks.each do |dependantTask|
             dependantTask.mutex.synchronize do
@@ -558,9 +567,9 @@ we want to refine the task generator to be a client to the Find module and reduc
                 if (dependantTask.dependencyWasUpdated or retVal)
                   dependantTask.dependencyWasUpdated = true
                 end
-                puts dependantTask.to_s + dependantTask.name + " " + dependantTask.dependenciesUpdatedCount.to_s + " " + dependantTask.dependencies.size.to_s
+                #puts dependantTask.to_s + dependantTask.name + " " + dependantTask.dependenciesUpdatedCount.to_s + " " + dependantTask.dependencies.size.to_s
                 if (dependantTask.dependenciesUpdatedCount == dependantTask.dependencies.size) and dependantTask.dependencyWasUpdated
-                  puts "[makr] we start a dependant task in a new thread"
+          #        puts "[makr] we start a dependant task in a new thread"
                   updater = Updater.new(dependantTask, @threadPool)
                   @threadPool.execute {updater.run()}
                 end
@@ -582,14 +591,11 @@ we want to refine the task generator to be a client to the Find module and reduc
       # beware of cycles in the DAG using the updateMarks
       collectedTasksWithNoDeps = Array.new
       recursiveMarkAndCollectTasksWithNoDeps(root, collectedTasksWithNoDeps)
-      collectedTasksWithNoDeps.each do |task|
-        puts task.to_s
-      end
       puts "now unifying"
       collectedTasksWithNoDeps.uniq!
       puts "collectedTasksWithNoDeps.size: " + collectedTasksWithNoDeps.size.to_s
       collectedTasksWithNoDeps.each do |noDepsTask|
-        puts "[makr] Starting noDepsTask " + noDepsTask.to_s + noDepsTask.name + " in a thread"
+        #puts "[makr] Starting noDepsTask " + noDepsTask.to_s + noDepsTask.name + " in a thread"
         updater = Updater.new(noDepsTask, @threadPool)
         @threadPool.execute {updater.run()}
       end
