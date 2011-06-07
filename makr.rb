@@ -184,7 +184,8 @@ module Makr
     attr_reader :fileName, :time, :size, :fileHash # absolute path for fileName expected!
 
     def initialize(fileName)  # absolute path for fileName expected!
-      @fileName = fileName.strip
+      @fileName = fileName
+      puts "[makr] made file task with @fileName=\"" + @fileName + "\""
       super(@fileName)
       # all file attribs stay uninitialized, so that first call to update returns true
       @time = @size = @fileHash = String.new
@@ -264,13 +265,13 @@ module Makr
 
     # class vars and functions
     @@checkOnlyUserHeaders = false
-    def self.checkOnlyUserHeaders()
+    def self.checkOnlyUserHeaders
       @@checkOnlyUserHeaders
     end
 
-    def self.makeObjectFileName(fileName, buildPath)
-      # we just keep it simple for now and add a ".o" to the given fileName, as we cannot safely replace a suffix
-      buildPath + "/" + File.basename(fileName.strip) + ".o"
+    # make a unique name for CompileTasks out of the fileName which is to be compiled
+    def self.makeName(fileName)
+      fileName + "__CompileTask"
     end
 
 
@@ -279,29 +280,36 @@ module Makr
     
     # build contains the global configuration, see Build.globalConfig and class Config
     def initialize(fileName, build)
-      @fileName = fileName.strip
-      @build = build
-      @objectFileName = CompileTask.makeObjectFileName(@fileName, @build.buildPath)
+      @fileName = fileName
       # now we need a unique name for this task. As we're defining a FileTask as dependency to fileName
       # and a FileExistenceTask on the @objectFileName to ensure a build of the target if it was deleted or
-      # otherwise modified (whatever you can think of here), we create a unique name out of the unique name
-      # of @objectFileName and a suffix
-      super(@objectFileName + "__CompileTask")
+      # otherwise modified (whatever you can think of here), we create a unique name
+      super(CompileTask.makeName(@fileName))
+      puts "[makr] made CompileTask with @name=\"" + @name + "\""
+
+      @build = build
+
+      # we just keep it simple for now and add a ".o" to the given fileName, as we cannot safely replace a suffix
+      @objectFileName = @build.buildPath + "/" + File.basename(@fileName) + ".o"
       @compileTarget = FileExistenceTask.new(@objectFileName)
-      build.taskHash[@objectFileName] = @compileTarget
+      @build.taskHash[@objectFileName] = @compileTarget
+
       @config = @build.globalConfig
+      
       buildDependencies()
     end
 
+    
     # a config may be a specific config per CompileTask, default is to reference build.globalConfig
-    # and as we are retrieving the object from a marshal dump, we need to take extra care, that the global
-    # config is only copied, if needed, that is, this local file has a config on its own, which is what happens
-    # once this function is called
-    def getLocalConfig
-      @config = @config.clone
+    # once this function is called, the task has a local config
+    def getLocalConfig()
+      if(@config == @build.globalConfig)
+        @config = @build.globalConfig.clone
+      end
+      @config
     end
 
-    
+
     def buildDependencies()
       clearDependencies()
       # we use the compiler for now, but maybe fastdep is worth a look / an adaption
@@ -332,6 +340,7 @@ module Makr
         end
       end
       dependencyFiles.each do |depFile|
+        depFile.strip!
         if @build.taskHash.has_key?(depFile)
           task = @build.taskHash[depFile]
           if not @dependencies.include?(task)
@@ -405,7 +414,7 @@ module Makr
     attr_accessor  :libs         # libs to be linked to the binary
 
     def initialize(programName, build)
-      @programName = programName.strip
+      @programName = programName
       super(@programName)
       @build = build
       @lFlags = @libPaths = @libs = String.new
@@ -461,7 +470,7 @@ module Makr
     def dumpTaskHash()
       # first cleanup task hash (remove tasks with no dependants and dependencies, "dangling tasks")
       # then dump the hash using Marshal.dump
-      @taskHash.delete_if { |name, task| task.dependencies.empty? }
+      @taskHash.delete_if { |name, task| (task.dependantTasks.empty? and task.dependencies.empty?)}
       File.open(@taskHashFile, "wb") do |dumpFile|
         Marshal.dump(@taskHash, dumpFile)
       end
@@ -504,12 +513,12 @@ module Makr
       matchFiles = Dir[pattern]
       matchFiles.each {|fileName|
                        fullFileName = (dirName + fileName).strip
-                       objectFileName = CompileTask.makeObjectFileName(fullFileName, build.buildPath)
-                       if not build.taskHash.has_key?(objectFileName)
+                       compileTaskName = CompileTask.makeName(fullFileName)
+                       if not build.taskHash.has_key?(compileTaskName)
                          #puts "[makr] making NEW compile task for file: \"" + fullFileName + "\""
-                         build.taskHash[objectFileName] = CompileTask.new(fullFileName, build)
+                         build.taskHash[compileTaskName] = CompileTask.new(fullFileName, build)
                        end
-                       compileTasksArray.push(build.taskHash[objectFileName])
+                       compileTasksArray.push(build.taskHash[compileTaskName])
                       }
       #puts "[makr] returning from subdir: " + dirName
       Dir.chdir("..")
@@ -523,6 +532,7 @@ module Makr
     def self.generate(dirName, pattern, build, progName)
       recursiveCompileTaskGenerator = RecursiveCompileTaskGenerator.new
       compileTasksArray = recursiveCompileTaskGenerator.generate(dirName, pattern, build)
+      progName.strip!
       if not build.taskHash.has_key?(progName)
         puts "[makr] making NEW program task with name: \"" + progName + "\""
         build.taskHash[progName] = ProgramTask.new(progName, build)
@@ -538,6 +548,9 @@ module Makr
 
 
 
+  we need to go up the tree with the traversal even in case dependency did not update
+  just to increase the dependenciesUpdatedCount in each marked node so that in case
+  of the update of a single child, the node will surely be updated!
 
   class UpdateTraverser
     
@@ -549,17 +562,17 @@ module Makr
       end
       
       def run()
-        logTaskID = @task.to_s + @task.name
-        #puts "[makr] Started task " + logTaskID + " in a thread, now locking"
-        @task.mutex.synchronize do
+       @task.mutex.synchronize do
           if not @task.updateMark
             raise "Unexpectedly starting on a task that needs no update!"
           end
           retVal = @task.update()
           @task.updateMark = false
-         # puts "[makr] " + logTaskID + ": updated with result: " + retVal.to_s + ", checking dependant tasks: " + @task.dependantTasks.size.to_s
-          #return
           @task.dependantTasks.each do |dependantTask|
+            if(dependantTask.kind_of? ProgramTask)
+              puts "ProgTask check: " + dependantTask.updateMark.to_s + "  " + \
+                   dependantTask.dependenciesUpdatedCount.to_s + " " + dependantTask.dependencies.size.to_s
+            end
             dependantTask.mutex.synchronize do
               if dependantTask.updateMark # only work on dependant tasks that want to be updated eventually
                 #puts "[makr] " + logTaskID + ": we have a dependant task that wants an update, check further"
@@ -567,9 +580,7 @@ module Makr
                 if (dependantTask.dependencyWasUpdated or retVal)
                   dependantTask.dependencyWasUpdated = true
                 end
-                #puts dependantTask.to_s + dependantTask.name + " " + dependantTask.dependenciesUpdatedCount.to_s + " " + dependantTask.dependencies.size.to_s
                 if (dependantTask.dependenciesUpdatedCount == dependantTask.dependencies.size) and dependantTask.dependencyWasUpdated
-          #        puts "[makr] we start a dependant task in a new thread"
                   updater = Updater.new(dependantTask, @threadPool)
                   @threadPool.execute {updater.run()}
                 end
