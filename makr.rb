@@ -548,9 +548,6 @@ module Makr
 
 
 
-  we need to go up the tree with the traversal even in case dependency did not update
-  just to increase the dependenciesUpdatedCount in each marked node so that in case
-  of the update of a single child, the node will surely be updated!
 
   class UpdateTraverser
     
@@ -561,28 +558,34 @@ module Makr
         @threadPool = threadPool
       end
       
-      def run()
+      # we need to go up the tree with the traversal even in case dependency did not update
+      # just to increase the dependenciesUpdatedCount in each marked node so that in case
+      # of the update of a single child, the node will surely be updated! An intermediate node
+      # might not be updated, as the argument callUpdate is false, but the algorithm logic
+      # still needs to handle dependant tasks for the above reason.
+      def run(callUpdate)
        @task.mutex.synchronize do
           if not @task.updateMark
             raise "Unexpectedly starting on a task that needs no update!"
           end
-          retVal = @task.update()
+          retVal = false
+          if(callUpdate)
+            retVal = @task.update()
+          end
           @task.updateMark = false
           @task.dependantTasks.each do |dependantTask|
-            if(dependantTask.kind_of? ProgramTask)
-              puts "ProgTask check: " + dependantTask.updateMark.to_s + "  " + \
-                   dependantTask.dependenciesUpdatedCount.to_s + " " + dependantTask.dependencies.size.to_s
-            end
             dependantTask.mutex.synchronize do
               if dependantTask.updateMark # only work on dependant tasks that want to be updated eventually
-                #puts "[makr] " + logTaskID + ": we have a dependant task that wants an update, check further"
                 dependantTask.dependenciesUpdatedCount = dependantTask.dependenciesUpdatedCount + 1
                 if (dependantTask.dependencyWasUpdated or retVal)
                   dependantTask.dependencyWasUpdated = true
                 end
-                if (dependantTask.dependenciesUpdatedCount == dependantTask.dependencies.size) and dependantTask.dependencyWasUpdated
+                # if we are the last thread to reach the dependant task, we will run the next thread
+                # on it. The dependant task needs to be updated if at least a single dependency task
+                # was update (which may not be the task of this thread)
+                if (dependantTask.dependenciesUpdatedCount == dependantTask.dependencies.size)
                   updater = Updater.new(dependantTask, @threadPool)
-                  @threadPool.execute {updater.run()}
+                  @threadPool.execute {updater.run(dependantTask.dependencyWasUpdated)}
                 end
               end
             end
@@ -597,9 +600,13 @@ module Makr
       @threadPool = ThreadPool.new(nrOfThreadsInPool)
     end
 
-    
-    def traverse(root) # root must be a task, which may be a build setup
-      # beware of cycles in the DAG using the updateMarks
+    # root must be a task. The traversal works as follows: we walk down the DAG until we reach
+    # tasks with no dependencies. Upon this walk we mark all tasks we visit. Then, from the
+    # independent tasks, we walk up again and run an Updater thread on each marked node. The number
+    # of threads is limited by a thread pool.
+    #
+    # TODO: We expect the DAG to have no cycles here. Should we check?
+    def traverse(root) 
       collectedTasksWithNoDeps = Array.new
       recursiveMarkAndCollectTasksWithNoDeps(root, collectedTasksWithNoDeps)
       puts "now unifying"
@@ -608,7 +615,7 @@ module Makr
       collectedTasksWithNoDeps.each do |noDepsTask|
         #puts "[makr] Starting noDepsTask " + noDepsTask.to_s + noDepsTask.name + " in a thread"
         updater = Updater.new(noDepsTask, @threadPool)
-        @threadPool.execute {updater.run()}
+        @threadPool.execute {updater.run(true)}
       end
       @threadPool.join()
     end
