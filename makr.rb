@@ -144,7 +144,7 @@ module Makr
 
     
     def addDependency(otherTask)
-      if(dependencies.index(otherTask) == nil)
+      if(@dependencies.index(otherTask) == nil)
         @dependencies.push(otherTask)
         otherTask.dependantTasks.push(self)
       end
@@ -153,7 +153,7 @@ module Makr
 
     
     def removeDependency(otherTask)
-      if(dependencies.index(otherTask) != nil)
+      if(@dependencies.index(otherTask) != nil)
         otherTask.dependantTasks.delete(self)
         @dependencies.delete(otherTask)
       else
@@ -163,15 +163,28 @@ module Makr
 
     
     def clearDependencies()
-      while not dependencies.empty?
-        removeDependency(dependencies.first)
+      while not @dependencies.empty?
+        removeDependency(@dependencies.first)
       end
     end
 
+    
+    def clearDependantTasks()
+      while not @dependantTasks.empty?
+        @dependantTasks.first.removeDependency(self)
+      end
+    end
+
+    
     # every subclass should provide an "update()" function, that returns wether the target of the task was updated
     # this is the default implementation
     def update() 
       false
+    end
+
+    # subclasses should override this
+    def canBeDeleted?
+      @dependencies.empty? and @dependantTasks.empty?
     end
     
   end
@@ -293,6 +306,7 @@ module Makr
       @objectFileName = @build.buildPath + "/" + File.basename(@fileName) + ".o"
       @compileTarget = FileExistenceTask.new(@objectFileName)
       @build.taskHash[@objectFileName] = @compileTarget
+      addDependency(@compileTarget)
 
       @config = @build.globalConfig
       
@@ -371,7 +385,16 @@ module Makr
       @compileTarget.update() # we call this to update file information on the compiled target
       return true # right now, we are always true (we could check for target equivalence or something else)
     end
-    
+
+    def canBeDeleted?
+      if(not File.file?(@fileName))
+        clearDependencies()
+        clearDependantTasks()
+        puts "[makr] compile task can be deleted: \"" + @name + "\""
+        return true
+      end
+      return false
+    end
   end
 
 
@@ -413,23 +436,46 @@ module Makr
     attr_accessor  :libPaths     # special linker paths
     attr_accessor  :libs         # libs to be linked to the binary
 
+    # make a unique name for ProgramTasks out of the programName which is to be compiled
+    def self.makeName(programName)
+      programName + "__ProgramTask"
+    end
+
+    
     def initialize(programName, build)
       @programName = programName
-      super(@programName)
+      super(ProgramTask.makeName(@programName))
       @build = build
       @lFlags = @libPaths = @libs = String.new
+      @compileTarget = FileExistenceTask.new(@programName)
+      @build.taskHash[@programName] = @compileTarget
+      addDependency(@compileTarget)
     end
     
 
     def update()
       # build compiler command and execute it
       compileCommand = @build.globalConfig.compilerCommand + " " + @lFlags + " " + @libPaths + " " + @libs + " -o " + @programName
-      @dependencies.each {|dep| compileCommand += " " + dep.objectFileName}
+      @dependencies.each do |dep|
+        if dep == @compileTarget
+          next
+        end
+        compileCommand += " " + dep.objectFileName
+      end
       puts "[makr] Building programTask \"" + @name + "\"\n\t" + compileCommand
       system(compileCommand)
+      @compileTarget.update() # we call this to update file information on the compiled target
       return true # this is always updated
     end
     
+    def canBeDeleted?
+      if(@dependencies.size == 1) # only the compileTarget remains as dep, so this task no longer makes sense
+        clearDependencies()
+        return true
+      end
+      return false
+    end
+
   end
 
   
@@ -453,6 +499,19 @@ module Makr
       loadTaskHash()
     end
 
+
+    def cleanupTaskHash()
+      # remove tasks with no dependants and dependencies ("dangling tasks")
+      # and other tasks that return canBeDeleted? as true (this can require several passes)
+      doCleanup = true
+      while doCleanup
+        oldTaskHashSize = @taskHash.size
+        @taskHash.delete_if { |name, task| task.canBeDeleted? }
+        puts "oldTaskHashSize  @taskHash.size: " + oldTaskHashSize.to_s + " " + @taskHash.size.to_s
+        doCleanup = (oldTaskHashSize != @taskHash.size)
+      end
+    end
+
     
     def loadTaskHash()
       puts "[makr] trying to read task hash from " + @taskHashFile
@@ -461,6 +520,8 @@ module Makr
         File.open(@taskHashFile, "rb") do |dumpFile|
           @taskHash = Marshal.load(dumpFile)
         end
+        # cleanup task Hash if something has changed since last dump
+        cleanupTaskHash()
       else
         puts "\n\n[makr] could not find or open taskHash file, tasks will be setup new!\n\n"
       end
@@ -468,20 +529,14 @@ module Makr
 
     
     def dumpTaskHash()
-      # first cleanup task hash (remove tasks with no dependants and dependencies, "dangling tasks")
+      # first cleanup task hash
+      cleanupTaskHash()
       # then dump the hash using Marshal.dump
-      @taskHash.delete_if { |name, task| (task.dependantTasks.empty? and task.dependencies.empty?)}
       File.open(@taskHashFile, "wb") do |dumpFile|
         Marshal.dump(@taskHash, dumpFile)
       end
     end
 
-
-    def setTarget(buildTask)
-      @target = buildTask
-      @taskHash[@target.name] = @target
-    end
-    
   end
 
 
@@ -533,12 +588,12 @@ module Makr
       recursiveCompileTaskGenerator = RecursiveCompileTaskGenerator.new
       compileTasksArray = recursiveCompileTaskGenerator.generate(dirName, pattern, build)
       progName.strip!
-      if not build.taskHash.has_key?(progName)
-        puts "[makr] making NEW program task with name: \"" + progName + "\""
-        build.taskHash[progName] = ProgramTask.new(progName, build)
+      programTaskName = ProgramTask.makeName(progName)
+      if not build.taskHash.has_key?(programTaskName)
+        puts "[makr] making NEW program task with name: \"" + programTaskName + "\""
+        build.taskHash[programTaskName] = ProgramTask.new(progName, build)
       end
-      programTask = build.taskHash[progName]
-      build.setTarget(programTask)
+      programTask = build.taskHash[programTaskName]
       compileTasksArray.each do |compileTask|
         programTask.addDependency(compileTask)
       end

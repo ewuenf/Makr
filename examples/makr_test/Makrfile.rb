@@ -14,9 +14,9 @@ else
 
   myProgramTask = Makr::ProgramGenerator.generate(localDir + "/src/", "*.{cpp,cxx,c}", build, buildDir + "/myProgram")
 
-  sourceName = Makr::CompileTask.makeName(localDir + "/src/A.cpp")
-  config = build.taskHash[sourceName].getLocalConfig
-  config.includePaths = config.includePaths + " -I/usr/include"
+  #sourceName = Makr::CompileTask.makeName(localDir + "/src/A.cpp")
+  #config = build.taskHash[sourceName].getLocalConfig
+  #config.includePaths = build.globalConfig.includePaths + " -I/usr/include"
 
   updateTraverser = Makr::UpdateTraverser.new(2)
   updateTraverser.traverse(myProgramTask)
