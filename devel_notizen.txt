@@ -1,0 +1,11 @@
+Notizen:
+
+Auf die globalConfig wird pro Compile-Task und
+Was passiert, wenn ein Unterscript beendet wird mit exit?
+  SystemExit-exception, Multithreading schein ein Problem
+
+Problem, falls Targets zwischendrin nicht existieren (Object-Files),
+oder zu alt sind im Verhältnis zu ihren Abhängigkeiten
+
+Kann das Löschen von CompileTasks sinnvoll geschehen oder benötigen wir einen reset?
+

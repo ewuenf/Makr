@@ -21,5 +21,5 @@ else
   updateTraverser = Makr::UpdateTraverser.new(2)
   updateTraverser.traverse(myProgramTask)
 
-  build.dumpTaskHash()
+  build.dumpTaskHashCache()
 end
