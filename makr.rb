@@ -163,6 +163,7 @@ module Makr
 
     
     def clearDependencies()
+      puts "[makr] clearing deps in: " + @name
       while not @dependencies.empty?
         removeDependency(@dependencies.first)
       end
@@ -189,69 +190,93 @@ module Makr
       false
     end
 
+    # can be impletemented by subclasses indicating that this task is no longer valid due to a circumstance such as
+    # a missing file
+    def mustBeDeleted?()
+      puts "[makr] Must be deld default."
+      false
+    end
+
+    def printDependencies(prefix)
+      puts prefix + @name + " deps size: " + @dependencies.size.to_s
+      @dependencies.each do |dep|
+        dep.printDependencies(prefix + "  ")
+      end
+    end
+
+    def cleanupBeforeDeletion()  # interface mainly for tasks generating targets
+    end
+    
   end
 
 
 
+  
+  def abortBuild()
+    puts "[makr] Aborting build process."
+    Kernel.exit! 1
+  end
+
+
+  
 
   class FileTask < Task
 
-    attr_reader :fileName, :time, :size, :fileHash # absolute path for fileName expected!
+    attr_reader :fileName, :time, :size, :fileHash, :missingFileIsError # absolute path for fileName expected!
 
-    def initialize(fileName)  # absolute path for fileName expected!
+    # the boolean argument missingFileIsError can be used to indicate, if an update is necessary, if file is missing 
+    # (which is the "false" case) or if it is an error and the build should abort
+    def initialize(fileName, missingFileIsError = true)  # absolute path for fileName expected!
       @fileName = fileName
       puts "[makr] made file task with @fileName=\"" + @fileName + "\""
       super(@fileName)
       # all file attribs stay uninitialized, so that first call to update returns true
       @time = @size = @fileHash = String.new
+      @missingFileIsError = missingFileIsError
     end
 
     
     def update()
       print "[makr] checkin FileTask " + fileName + "  "
+      if (not File.file?(@fileName))
+        if(@missingFileIsError)
+          puts "\n\n[makr] file " + fileName + "  is unexpectedly missing!\n\n"
+          Makr.abortBuild
+        end
+        return true;
+      end
       retValue = false
       curTime = File.stat(@fileName).mtime
       if(@time != curTime)
         @time = curTime
-        puts "[makr] FileTask, mtime changed: " + @fileName
         retValue = true
       end
       curSize = File.stat(@fileName).size
       if(@size != curSize)
-        #puts "[makr] FileTask, size changed: " + @fileName + " oldSize = " + @size + " newSize = " + curSize
         @size = curSize
         retValue = true
       end
       curHash = MD5.new(open(@fileName, 'rb').read).hexdigest
       if(@fileHash != curHash)
-        puts "[makr] FileTask, hash changed: " + @fileName + " oldHash = " + @fileHash #+ " newSize = " + curHash
         @fileHash = curHash
         retValue = true
       end
       puts retValue
       return retValue
     end
-  end
 
-
-  
-  
-  # In update(), this class checks, if the file exists and returns true otherwise. If the file exists, it calls super.update().
-  class FileExistenceTask < FileTask
-
-    def initialize(fileName)
-      puts "[makr] new FileExistenceTask: " + fileName
-      super(fileName)
-    end
-
-    def update()
-      puts "[makr] checking FileExistenceTask: " + @fileName
+    
+    # a missing file
+    def mustBeDeleted?()
+      puts "[makr] checking mustBeDeleted for: " + @fileName
       if (not File.file?(@fileName))
-        return true;
-      else
-        return super
+        if(@missingFileIsError)
+          return true;
+        end
       end
+      false
     end
+
   end
 
 
@@ -303,7 +328,7 @@ module Makr
       @config = @build.globalConfig
 
       # now we need a unique name for this task. As we're defining a FileTask as dependency to fileName
-      # and a FileExistenceTask on the @objectFileName to ensure a build of the target if it was deleted or
+      # and a FileTask on the @objectFileName to ensure a build of the target if it was deleted or
       # otherwise modified (whatever you can think of here), we create a unique name
       super(CompileTask.makeName(@fileName))
       puts "[makr] made CompileTask with @name=\"" + @name + "\""
@@ -312,12 +337,13 @@ module Makr
       @objectFileName = @build.buildPath + "/" + File.basename(@fileName) + ".o"
       
       if not @build.hasTask?(@objectFileName) then
-        @compileTarget = FileExistenceTask.new(@objectFileName)
+        @compileTarget = FileTask.new(@objectFileName, false)
         @build.addTask(@objectFileName, @compileTarget)
       else
         @compileTarget = @build.getTask(@objectFileName)
       end
       buildDependencies() # construct all deps including the @compileTarget-Dep
+      puts @name + " depCount " + @dependencies.size.to_s
     end
 
     
@@ -346,7 +372,7 @@ module Makr
       dependencyLines = compilerPipe.readlines
       if dependencyLines.empty?
         puts "[makr] Error in CompileTask: \"" + @fileName + "\" making dependencies failed, check file!"
-        Kernel.exit! 1 # should this be a hard error or should we continue gracefully?
+        Makr.abortBuild # should this be a hard error or should we continue gracefully?
       end
       dependencyFiles = Array.new
       dependencyLines.each do |depLine|
@@ -362,7 +388,7 @@ module Makr
       end
       dependencyFiles.each do |depFile|
         depFile.strip!
-        if @build.hasTask?(depFile)
+        if @build.hasTask?(depFile) then
           task = @build.getTask(depFile)
           if not @dependencies.include?(task)
             addDependency(task)
@@ -394,6 +420,11 @@ module Makr
       return true # right now, we are always true (we could check for target equivalence or something else)
     end
 
+    
+    def cleanupBeforeDeletion()
+      system("rm -f " + @objectFileName)
+    end
+    
   end
 
 
@@ -436,12 +467,13 @@ module Makr
       @programName = programName
       super(ProgramTask.makeName(@programName))
       @build = build
+      puts "[makr] made ProgramTask with @name=\"" + @name + "\""
 
       # TODO: we could load config from build dir?
       @lFlags = @libPaths = @libs = String.new
 
       if not @build.hasTask?(@programName) then
-        @compileTarget = FileExistenceTask.new(@programName)
+        @compileTarget = FileTask.new(@programName, false)
         @build.addTask(@programName, @compileTarget)
       else
         @compileTarget = @build.getTask(@programName)
@@ -466,6 +498,11 @@ module Makr
       return true # this is always updated
     end
 
+    
+    def cleanupBeforeDeletion()
+      system("rm -f " + @programName)
+    end
+    
   end
 
   
@@ -506,13 +543,15 @@ module Makr
 
 
     def getTask(taskName)
+      puts "[makr] getTask(taskName): " + taskName
       mutex.synchronize do
         if @taskHash.has_key?(taskName) then
           return @taskHash[taskName]
         elsif @taskHashCache.has_key?(taskName) then
-          return @taskHashCache[taskName]
+          addTaskPrivate(taskName, @taskHashCache[taskName])  # we make a copy upon request
+          return @taskHash[taskName]  
         else
-          raise "[makr] BUG: non-existant task requested!"
+          nil  # return nil, if no found (TODO more strict reaction here?)
         end
       end
     end
@@ -520,10 +559,11 @@ module Makr
 
     def addTask(taskName, task)
       mutex.synchronize do
-        @taskHash[taskName] = task   # we dont bother about cache here, as cache is overwritten on save to disk
+        addTaskPrivate(taskName, task)
       end
     end
 
+    
     def removeTask(taskName)
       mutex.synchronize do
         if @taskHash.has_key?(taskName) then # we dont bother about cache here, as cache is overwritten on save to disk
@@ -535,6 +575,35 @@ module Makr
     end
 
 
+    def dumpTaskHashCache()
+      mutex.synchronize do
+        # then dump the hash (and not the cache!, this way we get overridden cache next time)
+        File.open(@taskHashCacheFile, "wb") do |dumpFile|
+          Marshal.dump(@taskHash, dumpFile)
+        end
+      end
+    end
+
+
+  private
+
+    def addTaskPrivate(taskName, task)
+      if @taskHash.has_key? taskName then
+        puts "[makr] Build.addTask, taskName exists already!: " + taskName
+        return
+      end
+      @taskHash[taskName] = task   # we dont bother about cache here, as cache is overwritten on save to disk
+      # if a task is added all its dependencies are also added automatically, if it has em'
+      addArr = task.dependencies.clone
+      while not addArr.empty? do
+        curTask = addArr.delete_at(0)
+        if not @taskHash.has_key? curTask.name then
+          @taskHash[curTask.name] = curTask
+        end
+        addArr.concat(curTask.dependencies.clone)
+      end
+    end
+  
     def loadTaskHashCache()
       puts "[makr] trying to read task hash cache from " + @taskHashCacheFile
       if File.file?(@taskHashCacheFile)
@@ -545,13 +614,26 @@ module Makr
       else
         puts "\n\n[makr] could not find or open taskHash file, tasks will be setup new!\n\n"
       end
+
+      cleanTaskHashCache()
     end
+    
 
-
-    def dumpTaskHashCache()
-      # then dump the hash (and not the cache!, this way we get overridden cache next time)
-      File.open(@taskHashCacheFile, "wb") do |dumpFile|
-        Marshal.dump(@taskHash, dumpFile)
+    def cleanTaskHashCache()
+      puts "[makr] cleanTaskHashCache(): " + @taskHashCache.size.to_s
+      # remove tasks that want to be deleted and their
+      deleteArr = Array.new
+      @taskHashCache.each do |key, value|
+        if value.mustBeDeleted? then
+          deleteArr.push(value)
+        end
+      end
+      puts "[makr] cleanTaskHashCache(), number of tasks to be cleansed: " + deleteArr.size.to_s
+      while not deleteArr.empty? do
+        task = deleteArr.delete_at(0)
+        @taskHashCache.delete(task.name)
+        deleteArr.concat(task.dependantTasks)
+        task.cleanupBeforeDeletion()
       end
     end
 
@@ -583,7 +665,8 @@ module Makr
         fullFileName = (dirName + fileName).strip
         compileTaskName = CompileTask.makeName(fullFileName)
         if not build.hasTask?(compileTaskName)
-          build.addTask(compileTaskName, CompileTask.new(fullFileName, build))
+          localTask = CompileTask.new(fullFileName, build)
+          build.addTask(compileTaskName, localTask)
         end
         compileTasksArray.push(build.getTask(compileTaskName))
       end
@@ -664,6 +747,7 @@ module Makr
     def initialize(nrOfThreadsInPool)
       @threadPool = ThreadPool.new(nrOfThreadsInPool)
     end
+    
 
     # root must be a task. The traversal works as follows: we walk down the DAG until we reach
     # tasks with no dependencies. Upon this walk we mark all tasks we visit. Then, from the
@@ -676,7 +760,10 @@ module Makr
       recursiveMarkAndCollectTasksWithNoDeps(root, collectedTasksWithNoDeps)
       puts "now unifying"
       collectedTasksWithNoDeps.uniq!
-      puts "collectedTasksWithNoDeps.size: " + collectedTasksWithNoDeps.size.to_s
+      puts "collectedTasksWithNoDeps: "
+      collectedTasksWithNoDeps.each do |noDepsTask|
+        puts noDepsTask.name + noDepsTask.dependencies.size.to_s
+      end
       collectedTasksWithNoDeps.each do |noDepsTask|
         updater = Updater.new(noDepsTask, @threadPool)
         @threadPool.execute {updater.run(true)}
@@ -715,7 +802,7 @@ end     # end of module makr
 
 ################################################################## main logic interfacing with client code following
 
-puts "makr version 2011.5.22" # just give short version notice on every startup (Date-encoded)
+puts "makr version 2011.06.10" # just give short version notice on every startup (Date-encoded)
 
 # set global vars available to the code in the Makrfile and each dependent Makrfile based on the command line
 # arguments to this script, everything that begins with a "$" in the following is available to client code in Makrfile.rb
