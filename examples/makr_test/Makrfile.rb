@@ -18,10 +18,10 @@ else
   # set special options for a single compile task
   compileTaskName = Makr::CompileTask.makeName(localDir + "/src/A.cpp")
   if (build.hasTask?(compileTaskName)) then
+    task = build.getTask(compileTaskName)
     specialConfig = compilerConfig.clone
     specialConfig.includePaths += " -I/usr/include"
-    build.getTask(compileTaskName).config = specialConfig
-    build.getTask(compileTaskName).buildDependencies()
+    task.setConfig(specialConfig)
   end
 
   updateTraverser = Makr::UpdateTraverser.new(1)

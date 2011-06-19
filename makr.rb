@@ -333,14 +333,33 @@ module Makr
         @otherOptions = Array.new
       end
 
+      
       def makeCompilerCallString()
         retString = @compilerCommand + " " + @cFlags + " " + @defines + " " + @includePaths + " "
         @otherOptions.each { |option| retString += " " + option}
         retString
       end
 
+      
+      def clone() # ensure a deep copy
+        retConf = Config.new
+        retConf.compilerCommand = @compilerCommand.clone
+        retConf.cFlags = @cFlags.clone
+        retConf.defines = @defines.clone
+        retConf.includePaths = @includePaths.clone
+        retConf.otherOptions = @otherOptions.clone
+        retConf
+      end
+
+      
+      def == (otherConf)
+        return     (@compilerCommand == otherConf.compilerCommand) && (@cFlags == otherConf.cFlags            ) && \
+                   (@defines         == otherConf.defines        ) && (@includePaths == otherConf.includePaths) && \
+                   (@otherOptions    == otherConf.otherOptions   )
+      end
     end
 
+    
     # class vars and functions
     @@checkOnlyUserHeaders = false
     def self.checkOnlyUserHeaders
@@ -355,8 +374,7 @@ module Makr
 
 
     # the absolute path of the input and output file of the compilation
-    attr_reader :fileName, :objectFileName, :compileTarget
-    attr_accessor :config
+    attr_reader :fileName, :objectFileName, :compileTarget, :config
 
     
     # build contains the global configuration, see Build.globalConfig and class Config
@@ -384,6 +402,12 @@ module Makr
       buildDependencies() 
     end
 
+    def setConfig(config)
+      if @config != config then
+        @config = config
+        buildDependencies()
+      end
+    end
     
     def buildDependencies()
       clearDependencies()
@@ -667,36 +691,79 @@ module Makr
 
 
 
-#we want to refine the task generator to be a client to the Find module and reduce the interface to the proper
- # handling of a single file given the parameters it needs (at least a Build object)
 
 
-  class RecursiveCompileTaskGenerator
-    # expects an absolute path in dirName, where to find the files matching the pattern and adds all CompileTask objects to
-    # the taskHash of build and returns the list of CompileTasks made
-    def generate(dirName, pattern, build, config)
-      compileTasksArray = Array.new
-      recursiveGenerate(dirName, pattern, build, config, compileTasksArray)
-      compileTasksArray
-    end
+
+
+
+
+
+
+
+
+
+
+
+  class RecursiveGenerator
     
-    def recursiveGenerate(dirName, pattern, build, config, compileTasksArray)
+    def self.generate(dirName, pattern, generatorArray)
+      taskCollection = Array.new
+      recursiveGenerate(dirName, pattern, generatorArray, taskCollection)
+      return taskCollection
+    end
+
+    def self.recursiveGenerate(dirName, pattern, generatorArray, taskCollection)
       Dir.chdir(dirName)
       # first recurse into sub directories
-      Dir['*/'].each { |subDir| recursiveGenerate(dirName + subDir, pattern, build, config, compileTasksArray) }
+      Dir['*/'].each { |subDir| recursiveGenerate(dirName + subDir, pattern, generatorArray, taskCollection) }
 
       # then catch all files matching the pattern and add a compile task for each one
       matchFiles = Dir[pattern]
       matchFiles.each do |fileName|
-        fullFileName = (dirName + fileName).strip
-        compileTaskName = CompileTask.makeName(fullFileName)
-        if not build.hasTask?(compileTaskName)
-          localTask = CompileTask.new(fullFileName, build, config)
-          build.addTask(compileTaskName, localTask)
+        generatorArray.each do |generator|
+          task = generator.generate(dirName, fileName)
+          if task != nil then
+            taskCollection.push(task)
+          end
         end
-        compileTasksArray.push(build.getTask(compileTaskName))
       end
       Dir.chdir("..")
+    end
+  end
+  
+
+
+
+
+  
+  class CompileTaskGenerator
+
+    def initialize(build, config)
+      @build = build
+      @config = config
+    end
+    
+    def generate(dirName, fileName)
+      fullFileName = (dirName + fileName).strip
+      compileTaskName = CompileTask.makeName(fullFileName)
+      if not @build.hasTask?(compileTaskName)
+        localTask = CompileTask.new(fullFileName, @build, @config)
+        @build.addTask(compileTaskName, localTask)
+      end
+      return @build.getTask(compileTaskName)
+    end
+    
+  end
+
+
+  
+
+  class RecursiveCompileTaskGenerator
+    # expects an absolute path in dirName, where to find the files matching the pattern and adds all CompileTask objects to
+    # the taskHash of build and returns the list of CompileTasks made
+    def self.generate(dirName, pattern, build, config)
+      generatorArray = [CompileTaskGenerator.new(build, config)]
+      return RecursiveGenerator.generate(dirName, pattern, generatorArray)
     end
   end
 
@@ -705,8 +772,8 @@ module Makr
   
   class ProgramGenerator
     def self.generate(dirName, pattern, build, progName, config)
-      recursiveCompileTaskGenerator = RecursiveCompileTaskGenerator.new
-      compileTasksArray = recursiveCompileTaskGenerator.generate(dirName, pattern, build, config)
+      compileTasksArray = RecursiveCompileTaskGenerator.generate(dirName, pattern, build, config)
+      Makr.log.debug("compileTasksArray.size: " + compileTasksArray.size.to_s)
       progName.strip!
       programTaskName = ProgramTask.makeName(progName)
       if not build.hasTask?(programTaskName)
@@ -750,14 +817,12 @@ module Makr
           @task.dependantTasks.each do |dependantTask|
             dependantTask.mutex.synchronize do
               if dependantTask.updateMark # only work on dependant tasks that want to be updated eventually
-                dependantTask.dependenciesUpdatedCount = dependantTask.dependenciesUpdatedCount + 1
-                if (dependantTask.dependencyWasUpdated or retVal)
-                  dependantTask.dependencyWasUpdated = true
-                end
+                dependantTask.dependencyWasUpdated ||= retVal
                 # if we are the last thread to reach the dependant task, we will run the next thread
                 # on it. The dependant task needs to be updated if at least a single dependency task
                 # was update (which may not be the task of this thread)
-                if (dependantTask.dependenciesUpdatedCount == dependantTask.dependencies.size)
+                dependantTask.dependenciesUpdatedCount = dependantTask.dependenciesUpdatedCount + 1
+                if(dependantTask.dependenciesUpdatedCount == dependantTask.dependencies.size)
                   updater = Updater.new(dependantTask, @threadPool)
                   @threadPool.execute {updater.run(dependantTask.dependencyWasUpdated)}
                 end
@@ -785,6 +850,7 @@ module Makr
       collectedTasksWithNoDeps = Array.new
       recursiveMarkAndCollectTasksWithNoDeps(root, collectedTasksWithNoDeps)
       collectedTasksWithNoDeps.uniq!
+      Makr.log.debug("collectedTasksWithNoDeps.size: " + collectedTasksWithNoDeps.size.to_s)
       collectedTasksWithNoDeps.each do |noDepsTask|
         updater = Updater.new(noDepsTask, @threadPool)
         @threadPool.execute {updater.run(true)}
@@ -868,7 +934,7 @@ end     # end of module makr
 
 
 ################################################################## main logic interfacing with client code following
-Makr.log.level = Logger::INFO
+Makr.log.level = Logger::DEBUG
 Makr.log.formatter = proc { |severity, datetime, progname, msg|
     "[makr] #{severity} #{msg}\n"
 }
