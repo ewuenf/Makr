@@ -805,7 +805,10 @@ module Makr
       # might not be updated, as the argument callUpdate is false, but the algorithm logic
       # still needs to handle dependant tasks for the above reason.
       def run(callUpdate)
-       @task.mutex.synchronize do
+        if SignalHandler.setSigUsr1 then  # if the user sent a signal to this process, then we just exit all
+          return                          # runnables that start without spawning new ones (which happens below)
+        end
+        @task.mutex.synchronize do
           if not @task.updateMark
             raise "Unexpectedly starting on a task that needs no update!"
           end
@@ -926,19 +929,63 @@ module Makr
     popArgs()
   end
 
-
+  class SignalHandler
+    def self.setSigUsr1()
+      @@sigUsr1Called = true
+    end
+    def self.getSigUsr1()
+      if @@sigUsr1Called == nil then
+        return false
+      else
+        @@sigUsr1Called
+      end
+    end
+  end
+  
 end     # end of module makr
 
 
 
 
 
-################################################################## main logic interfacing with client code following
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+make config load/store in xml?
+
+
+
+
+
+
+
+
+
+
+####################################################################################################################
+
+# MAIN logic and interface with client code following
+
+####################################################################################################################
 Makr.log.level = Logger::DEBUG
 Makr.log.formatter = proc { |severity, datetime, progname, msg|
     "[makr] #{severity} #{msg}\n"
 }
 Makr.log << "\n\nmakr version 2011.06.18\n\n"  # just give short version notice on every startup (Date-encoded)
+
+Signal.trap("USR1")  { Makr::SignalHandler.setSigUsr1 }
 
 # now we load the Makrfile.rb and use Kernel.load on them to execute them as ruby scripts
 makrFilePath = Dir.pwd + "/Makrfile.rb"
