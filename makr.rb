@@ -161,7 +161,7 @@ module Makr
   # needs to be performed (such as a versioning system update or somefingelse)
   class Task
     
-    attr_reader :name, :dependencies, :dependantTasks
+    attr_reader :name, :dependencies, :dependantTasks, :config # config is nil, if not set explicitely
     # these are used by the multi-threaded UpdateTraverser
     attr_accessor :mutex, :updateMark, :dependenciesUpdatedCount, :dependencyWasUpdated
 
@@ -178,6 +178,9 @@ module Makr
       @dependencyWasUpdated = false
     end
 
+    def makeLocalConfig()
+      @config = Config.new(@config)
+    end
     
     def addDependency(otherTask)
       if(@dependencies.index(otherTask) == nil)
@@ -311,7 +314,45 @@ module Makr
   end
 
 
+
   
+  #   Hierarchical configuration management, general usage:
+  #
+  #   config = Config.new  # create a new Config with no parent
+  #   config["your.option.name"] = "value, like compiler flags etc."
+  #   dependentConfig = Config.new(config)  # makes a new Config with config as parent
+  #   # the following will override, but not overwrite (!) config["your.option.name"]
+  #   dependentConfig["your.option.name"] = "value, like other flags etc."
+  #   # this will create a new entry, which is not available in config (just to dependentConfig and all
+  #   # Config instances, that dependentConfig is parent to)
+  #   dependentConfig["your.option.name.special"] = "value"
+  #   # the new entry in config is also available in dependentConfig
+  #   config["your.option.name.more_general"] = "genVal"
+  class Config
+
+    def initialize(parent = nil) # parent is a config, too
+      @parent =  parent
+      @hash = Hash.new
+    end
+
+    def [](key)
+      if @hash.has_key?(key) or not @parent then
+        # we have the key and return it or we have no parent and return nil (the hash returns nil if it hasnt got the key)
+        return @hash[key] 
+      else # case: hash has not got the key and we have a parent
+        # the following will either return a value to the key found in one of the recursive parents or it will
+        # return nil, as the key was not found (comparable to a standard hash behaviour)
+        return @parent[key]
+      end
+    end
+
+    def []=(key, value)
+      # we always assign, regardless of the parent, which may have the same key, as the keys
+      # in this class override the parents keys (see also [](key))
+      @hash[key] = value 
+    end
+
+  end
 
 
 
@@ -564,7 +605,7 @@ module Makr
 
     attr_reader   :buildPath
     attr_reader   :taskHashCacheFile
-    attr_accessor :mutex
+    attr_accessor :mutex, :globalConfigs
 
 
     # build path should be absolute and is read-only once set in this "ctor"
@@ -582,6 +623,8 @@ module Makr
       loadTaskHashCache()
 
       @mutex = Mutex.new
+      @globalConfigs = Hash.new
+      loadAndAssignConfigs()  # loads configs from build dir and assign em to tasks
     end
 
 
@@ -625,6 +668,7 @@ module Makr
 
     def save()
       dumpTaskHashCache()
+      dumpConfigs()
     end
 
     def dumpTaskHashCache()
@@ -949,21 +993,6 @@ end     # end of module makr
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-make config load/store in xml?
 
 
 
