@@ -5,7 +5,7 @@
 # I hereby name it "makr" and it will read "Makrfiles", uenf!
 #
 # Documentation is sparse as source is short and a number
-# of examples are provided.
+# of examples are/willbe provided.
 
 
 
@@ -130,14 +130,7 @@ module Makr
   end
 
   # end of thread pool implementation ########################################################################################
-
-
-  
-
-
-
-
-  # own classes follow
+  # own methods / classes follow
 
 
   
@@ -152,6 +145,80 @@ module Makr
   def self.abortBuild()
     Makr.log.fatal("Aborting build process.")
     Kernel.exit! 1  # does this work ???
+  end
+
+
+
+  
+  #   Hierarchical configuration management, general usage:
+  #
+  #   config = Config.new  # create a new Config with no parent
+  #   config["your.option.name"] = "value, like compiler flags etc."
+  #   dependentConfig = Config.new(config)  # makes a new Config with config as parent
+  #   # the following will override, but not overwrite (!) config["your.option.name"]
+  #   dependentConfig["your.option.name"] = "value, like other flags etc."
+  #   # this will create a new entry, which is not available in config (just to dependentConfig and all
+  #   # Config instances, that dependentConfig is parent to)
+  #   dependentConfig["your.option.name.special"] = "value"
+  #   # the new entry in config is also available in dependentConfig
+  #   config["your.option.name.more_general"] = "genVal"
+  class Config
+
+    def initialize(parent = nil) # parent is a config, too
+      @parent =  parent
+      @hash = Hash.new
+    end
+
+    def [](key)
+      if @hash.has_key?(key) or not @parent then
+        # we have the key and return it or we have no parent and return nil (the hash returns nil if it hasnt got the key)
+        return @hash[key]
+      else # case: hash has not got the key and we have a parent
+        # the following will either return a value to the key found in one of the recursive parents or it will
+        # return nil, as the key was not found (comparable to a standard hash behaviour)
+        return @parent[key]
+      end
+    end
+
+    def []=(key, value)
+      # we always assign, regardless of the parent, which may have the same key, as the keys
+      # in this class override the parents keys (see also [](key))
+      @hash[key] = value
+    end
+
+
+    def output(io, name)
+      io << "start:" << name << "\n\n"
+      sortedHash = @hash.sort
+      sortedHash.each do |entry|
+        io << "  \"" << escape(entry[0]) << "\"=\"" << escape(entry[1]) << "\"\n"
+      end
+      io << "\nend:" << name << "\n\n"
+    end
+
+    
+    def input(io, name, lineCount)
+      while io.gets do
+        lineCount +=1
+        line = $_.strip
+        if line.empty? then
+          next
+        end
+        if line.index("start:") == 0 then
+          name = line[("start:".length..-1)]
+          next
+        end
+        if line.index("end:") == 0 then
+          return
+        end
+        splitArr = line.split("\"=")
+        if splitArr.size < 2 then
+          raise ("Parse error at line nr " + lineCount.to_s)
+        end
+        @hash[splitArr[0]] = splitArr[-1]
+      end
+    end
+
   end
 
 
@@ -315,89 +382,15 @@ module Makr
 
 
 
-  
-  #   Hierarchical configuration management, general usage:
-  #
-  #   config = Config.new  # create a new Config with no parent
-  #   config["your.option.name"] = "value, like compiler flags etc."
-  #   dependentConfig = Config.new(config)  # makes a new Config with config as parent
-  #   # the following will override, but not overwrite (!) config["your.option.name"]
-  #   dependentConfig["your.option.name"] = "value, like other flags etc."
-  #   # this will create a new entry, which is not available in config (just to dependentConfig and all
-  #   # Config instances, that dependentConfig is parent to)
-  #   dependentConfig["your.option.name.special"] = "value"
-  #   # the new entry in config is also available in dependentConfig
-  #   config["your.option.name.more_general"] = "genVal"
-  class Config
-
-    def initialize(parent = nil) # parent is a config, too
-      @parent =  parent
-      @hash = Hash.new
-    end
-
-    def [](key)
-      if @hash.has_key?(key) or not @parent then
-        # we have the key and return it or we have no parent and return nil (the hash returns nil if it hasnt got the key)
-        return @hash[key] 
-      else # case: hash has not got the key and we have a parent
-        # the following will either return a value to the key found in one of the recursive parents or it will
-        # return nil, as the key was not found (comparable to a standard hash behaviour)
-        return @parent[key]
-      end
-    end
-
-    def []=(key, value)
-      # we always assign, regardless of the parent, which may have the same key, as the keys
-      # in this class override the parents keys (see also [](key))
-      @hash[key] = value 
-    end
-
-  end
-
-
-
-
 
   # Represents a compiled source that has dependencies to included files (and any deps that a user may specify).
   # The input files are dependencies on FileTasks including the source itself. Another dependency exists on the
   # target object file, so that the task rebuilds, if that file was deleted or modified otherwise.
   class CompileTask < Task
     
-    class Config
-
-      # otherOptions is just an array of strings for arbitrary compiler arguments
-      attr_accessor :compilerCommand, :cFlags, :defines, :includePaths, :otherOptions
-
-      def initialize()
-        @compilerCommand = "g++ "                        # default val
-        @cFlags = @defines = @includePaths = String.new  # default is empty
-        @otherOptions = Array.new
-      end
-
-      
-      def makeCompilerCallString()
-        retString = @compilerCommand + " " + @cFlags + " " + @defines + " " + @includePaths + " "
-        @otherOptions.each { |option| retString += " " + option}
-        retString
-      end
-
-      
-      def clone() # ensure a deep copy
-        retConf = Config.new
-        retConf.compilerCommand = @compilerCommand.clone
-        retConf.cFlags = @cFlags.clone
-        retConf.defines = @defines.clone
-        retConf.includePaths = @includePaths.clone
-        retConf.otherOptions = @otherOptions.clone
-        retConf
-      end
-
-      
-      def == (otherConf)
-        return     (@compilerCommand == otherConf.compilerCommand) && (@cFlags == otherConf.cFlags            ) && \
-                   (@defines         == otherConf.defines        ) && (@includePaths == otherConf.includePaths) && \
-                   (@otherOptions    == otherConf.otherOptions   )
-      end
+    def makeCompilerCallString()
+      @config["compiler"] + " " + @config["compiler.cFlags"] + " " + \
+        @config["compiler.defines"] + " " + @config["compiler.includePaths"]
     end
 
     
@@ -428,7 +421,6 @@ module Makr
       # and a FileTask on the @objectFileName to ensure a build of the target if it was deleted or
       # otherwise modified (whatever you can think of here), we create a unique name
       super(CompileTask.makeName(@fileName))
-      Makr.log.debug("made CompileTask with @name=\"" + @name + "\"")
 
       # we just keep it simple for now and add a ".o" to the given fileName, as we cannot safely replace a suffix
       @objectFileName = @build.buildPath + "/" + File.basename(@fileName) + ".o"
@@ -441,14 +433,10 @@ module Makr
       end
       # the following first deletes all deps and then constructs them including the @compileTarget
       buildDependencies() 
+
+      Makr.log.debug("made CompileTask with @name=\"" + @name + "\" and output file " + @objectFileName)
     end
 
-    def setConfig(config)
-      if @config != config then
-        @config = config
-        buildDependencies()
-      end
-    end
     
     def buildDependencies()
       clearDependencies()
@@ -458,7 +446,7 @@ module Makr
       if @@checkOnlyUserHeaders
         dependOption = " -MM "
       end
-      depCommand = @config.makeCompilerCallString() + " " + dependOption + " " + @fileName
+      depCommand = makeCompilerCallString() + dependOption + @fileName
       Makr.log.info("Executing compiler to check for dependencies in CompileTask: \"" + @fileName + "\"\n\t" + depCommand)
       compilerPipe = IO.popen(depCommand)  # in ruby >= 1.9.2 we could use Open3.capture2(...) for this purpose
       dependencyLines = compilerPipe.readlines
@@ -500,7 +488,7 @@ module Makr
       # we always want this if any dependency changed, as this could mean changed dependencies due to new includes etc.
       buildDependencies()                          
       # construct compiler command and execute it
-      compileCommand = @config.makeCompilerCallString() + " -c " + " " + @fileName + " -o " + @objectFileName
+      compileCommand = makeCompilerCallString() + " -c " + @fileName + " -o " + @objectFileName
       Makr.log.info("Executing compiler in CompileTask: \"" + @fileName + "\"\n\t" + compileCommand)
       successful = system(compileCommand)
       if not successful
@@ -544,10 +532,6 @@ module Makr
   class ProgramTask < Task
 
     attr_reader    :programName  # identifies the binary to be build, wants full path as usual
-    attr_accessor  :compilerCommand
-    attr_accessor  :lFlags       # special linker flags
-    attr_accessor  :libPaths     # special linker paths
-    attr_accessor  :libs         # libs to be linked to the binary
 
     
     # make a unique name for ProgramTasks out of the programName which is to be compiled
@@ -555,16 +539,17 @@ module Makr
        "ProgramTask__" + programName
     end
 
+
+    def makeLinkerCallString()
+      @config["linker"] + " " + @config["linker.lFlags"] + " " + @config["linker.libPaths"] + " " + @config["linker.libs"]
+    end
+
     
-    def initialize(programName, build)
+    def initialize(programName, build, config)
       @programName = programName
       super(ProgramTask.makeName(@programName))
       @build = build
-      Makr.log.debug("made ProgramTask with @name=\"" + @name + "\"")
-
-      # TODO: we could load config from build dir? and use a subclass for config, as in CompileTask
-      @compilerCommand = "g++ "
-      @lFlags = @libPaths = @libs = String.new
+      @config = config
 
       if not @build.hasTask?(@programName) then
         @compileTarget = FileTask.new(@programName, false)
@@ -573,20 +558,22 @@ module Makr
         @compileTarget = @build.getTask(@programName)
       end
       addDependency(@compileTarget)
+
+      Makr.log.debug("made ProgramTask with @name=\"" + @name + "\"")
     end
     
 
     def update()
       # build compiler command and execute it
-      compileCommand = @compilerCommand + " " + @lFlags + " " + @libPaths + " " + @libs + " -o " + @programName
+      linkCommand = makeLinkerCallString() + " -o " + @programName
       @dependencies.each do |dep|
         if dep == @compileTarget then
           next
         end
-        compileCommand += " " + dep.objectFileName
+        linkCommand += " " + dep.objectFileName
       end
-      Makr.log.info("Building programTask \"" + @name + "\"\n\t" + compileCommand)
-      system(compileCommand)  # TODO we dont check for return here. maybe we should?
+      Makr.log.info("Building programTask \"" + @name + "\"\n\t" + linkCommand)
+      system(linkCommand)  # TODO we dont check for return here. maybe we should?
       @compileTarget.update() # we call this to update file information on the compiled target
       return true # this is always updated
     end
@@ -973,6 +960,9 @@ module Makr
     popArgs()
   end
 
+
+
+  
   class SignalHandler
     def self.setSigUsr1()
       @@sigUsr1Called = true
@@ -985,18 +975,11 @@ module Makr
       end
     end
   end
+
+
+
   
-end     # end of module makr
-
-
-
-
-
-
-
-
-
-
+end     # end of module makr ######################################################################################
 
 
 
