@@ -9,7 +9,7 @@
 
 
 
-
+require 'ftools'
 require 'find'
 require 'thread'
 require 'md5'
@@ -150,25 +150,22 @@ module Makr
 
 
   
-  #   Hierarchical configuration management, general usage:
-  #
-  #   config = Config.new  # create a new Config with no parent
-  #   config["your.option.name"] = "value, like compiler flags etc."
-  #   dependentConfig = Config.new(config)  # makes a new Config with config as parent
-  #   # the following will override, but not overwrite (!) config["your.option.name"]
-  #   dependentConfig["your.option.name"] = "value, like other flags etc."
-  #   # this will create a new entry, which is not available in config (just to dependentConfig and all
-  #   # Config instances, that dependentConfig is parent to)
-  #   dependentConfig["your.option.name.special"] = "value"
-  #   # the new entry in config is also available in dependentConfig
-  #   config["your.option.name.more_general"] = "genVal"
+  # Hierarchical configuration management. Asking for a key will walk up
+  # in hierarchy, until key is found or a new entry needs to be created in root config.
+  # Hierarchy is with single parent. Regarding construction and usage of configs see class Build.
+  # Keys could follow naming rules like "my.perfect.config.key"
   class Config
 
-    def initialize(parent = nil) # parent is a config, too
+    attr_reader   :name, :parent
+
+    
+    def initialize(name, parent = nil) # parent is a config, too
+      @name = name
       @parent =  parent
       @hash = Hash.new
     end
 
+    
     def [](key)
       if @hash.has_key?(key) or not @parent then
         # we have the key and return it or we have no parent and return nil (the hash returns nil if it hasnt got the key)
@@ -180,6 +177,7 @@ module Makr
       end
     end
 
+    
     def []=(key, value)
       # we always assign, regardless of the parent, which may have the same key, as the keys
       # in this class override the parents keys (see also [](key))
@@ -187,36 +185,59 @@ module Makr
     end
 
 
-    def output(io, name)
-      io << "start:" << name << "\n\n"
+    def output(io)
+      io << "  start " << @name << "\n"
+      if @parent then
+        io << "  parent " << @parent.name << "\n"
+      end
       sortedHash = @hash.sort
       sortedHash.each do |entry|
-        io << "  \"" << escape(entry[0]) << "\"=\"" << escape(entry[1]) << "\"\n"
+        io << "    \"" << entry[0] << "\"=\"" << entry[1] << "\"\n"
       end
-      io << "\nend:" << name << "\n\n"
+      io << "  end " << @name << "\n\n"
     end
 
     
-    def input(io, name, lineCount)
-      while io.gets do
-        lineCount +=1
-        line = $_.strip
-        if line.empty? then
+    def input(lines, lineIndex, parentName)
+      foundStart = false
+      lineIndex -=1  # we first decrease lineIndex as there is no fuckin c-style-for-loop in this language-garbage!
+      while lineIndex < lines.size() do
+        lineIndex +=1
+        line = lines[lineIndex]
+        # remove whitespace
+        line.strip!
+        #ignore newlines
+        if line.empty? then 
           next
         end
-        if line.index("start:") == 0 then
-          name = line[("start:".length..-1)]
+        # at first, we need to have a start marker
+        if not foundStart then
+          if not line.index("start") then
+            Makr.log.error("Config parse error at line nr " + lineCount.to_s)
+            return false
+          else
+            @name = line["start ".length, -2]
+            foundStart = true
+            next
+          end
+        end
+        # then we check for a parent
+        if line.index("parent") == 0 then
+          parentName = line["parent ".length, -2]
           next
         end
-        if line.index("end:") == 0 then
-          return
+        # if we find the end marker, we can return true
+        if line.index("end") == 0 then
+          return true
         end
-        splitArr = line.split("\"=")
+        splitArr = line.split("\"=\"")
         if splitArr.size < 2 then
-          raise ("Parse error at line nr " + lineCount.to_s)
+          Makr.log.error("Parse error at line nr " + lineIndex.to_s)
+          return false
         end
         @hash[splitArr[0]] = splitArr[-1]
       end
+      return false # gone through all lines without finding end
     end
 
   end
@@ -228,12 +249,12 @@ module Makr
   # needs to be performed (such as a versioning system update or somefingelse)
   class Task
     
-    attr_reader :name, :dependencies, :dependantTasks, :config # config is nil, if not set explicitely
+    attr_reader :name, :dependencies, :dependantTasks
     # these are used by the multi-threaded UpdateTraverser
-    attr_accessor :mutex, :updateMark, :dependenciesUpdatedCount, :dependencyWasUpdated
+    attr_accessor :mutex, :updateMark, :dependenciesUpdatedCount, :dependencyWasUpdated, :configName
 
     
-    def initialize(name)
+    def initialize(name) # name should be unique !
       @name = name
       @dependencies = Array.new
       @dependantTasks = Array.new
@@ -243,11 +264,10 @@ module Makr
       @updateMark = false
       @dependenciesUpdatedCount = 0
       @dependencyWasUpdated = false
+
+      @configName = String.new  # got no config so far
     end
 
-    def makeLocalConfig()
-      @config = Config.new(@config)
-    end
     
     def addDependency(otherTask)
       if(@dependencies.index(otherTask) == nil)
@@ -289,13 +309,20 @@ module Makr
     end
 
     
-    # every subclass should provide an "update()" function, that returns wether the target of the task was updated.
-    # The default implementation returns false. This function gets called when at least a single dependecy was updated
-    # or if there are no dependencies at all.
+    # Every subclass should provide an "update()" function, that returns wether the target of the task is updated/changed.
+    # The task graph should be unchanged during update. Use functions preUpdate() or postUpdate() for this purpose.
     def update() 
       false
     end
 
+    # postUpdate() is called after all tasks have been "update()"d. Task instances need to register for the
+    # postUpdate()-call during the update()-call using Build::registerPostUpdate(task). While update() is called in
+    # parallel on the task graph and should not modify the graph, This function is called on all registered tasks in a
+    # single thread, so that no issues with multi-threading can occur. As this obviously is a bottleneck, the function
+    # should only be used, if necessary. This behaviour might change in future revisions of this tool, as the author or
+    # someone else might get better concepts out of his brain.
+    def postUpdate()
+    end
     
     # can be impletemented by subclasses indicating that this task is no longer valid due to a circumstance such as
     # a missing file
@@ -335,6 +362,18 @@ module Makr
     end
 
     
+    # a missing file
+    def mustBeDeleted?()
+      if (not File.file?(@fileName))
+        if(@missingFileIsError)
+          Makr.log.info("mustBeDeleted?() is true for missing file: " + @fileName)
+          return true;
+        end
+      end
+      false
+    end
+
+    
     def update()
       if (not File.file?(@fileName))
         if(@missingFileIsError)
@@ -366,18 +405,6 @@ module Makr
       return retValue
     end
 
-    
-    # a missing file
-    def mustBeDeleted?()
-      if (not File.file?(@fileName))
-        if(@missingFileIsError)
-          Makr.log.info("mustBeDeleted?() is true for missing file: " + @fileName)
-          return true;
-        end
-      end
-      false
-    end
-
   end
 
 
@@ -389,8 +416,9 @@ module Makr
   class CompileTask < Task
     
     def makeCompilerCallString()
-      @config["compiler"] + " " + @config["compiler.cFlags"] + " " + \
-        @config["compiler.defines"] + " " + @config["compiler.includePaths"]
+      config = @build.getConfig(@configName)
+      config["compiler"] + " " + config["compiler.cFlags"] + " " + \
+        config["compiler.defines"] + " " + config["compiler.includePaths"]
     end
 
     
@@ -432,14 +460,13 @@ module Makr
         @compileTarget = @build.getTask(@objectFileName)
       end
       # the following first deletes all deps and then constructs them including the @compileTarget
+      getDepsStringArrayFromCompiler()
       buildDependencies() 
 
       Makr.log.debug("made CompileTask with @name=\"" + @name + "\" and output file " + @objectFileName)
     end
 
-    
-    def buildDependencies()
-      clearDependencies()
+    def getDepsStringArrayFromCompiler()
       # we use the compiler for now, but maybe fastdep is worth a look / an adaption
       # we are excluding system headers for now (option "-MM"), but that may not bring performance, then use option "-M"
       dependOption = " -M "
@@ -449,13 +476,16 @@ module Makr
       depCommand = makeCompilerCallString() + dependOption + @fileName
       Makr.log.info("Executing compiler to check for dependencies in CompileTask: \"" + @fileName + "\"\n\t" + depCommand)
       compilerPipe = IO.popen(depCommand)  # in ruby >= 1.9.2 we could use Open3.capture2(...) for this purpose
-      dependencyLines = compilerPipe.readlines
-      if dependencyLines.empty?
+      @dependencyLines = compilerPipe.readlines
+      if @dependencyLines.empty?
         Makr.log.error("error in CompileTask: \"" + @fileName + "\" making dependencies failed, check file!")
-        Makr.abortBuild # should this be a hard error or should we continue gracefully?
       end
+    end
+    
+    def buildDependencies()
+      clearDependencies()
       dependencyFiles = Array.new
-      dependencyLines.each do |depLine|
+      @dependencyLines.each do |depLine|
         if depLine.include?('\\') # remove newline *and* backslash on each line, if present
           depLine.chop!.chop!  # double chop needed
         end        
@@ -485,8 +515,6 @@ module Makr
 
     
     def update()
-      # we always want this if any dependency changed, as this could mean changed dependencies due to new includes etc.
-      buildDependencies()                          
       # construct compiler command and execute it
       compileCommand = makeCompilerCallString() + " -c " + @fileName + " -o " + @objectFileName
       Makr.log.info("Executing compiler in CompileTask: \"" + @fileName + "\"\n\t" + compileCommand)
@@ -496,9 +524,15 @@ module Makr
         abortBuild()
       end
       @compileTarget.update() # we call this to update file information on the compiled target
+      # we always want this if any dependency changed, as this could mean changed dependencies due to new includes etc.
+      getDepsStringArrayFromCompiler()
+      @build.registerPostUpdate(self)
       return true # right now, we are always true (we could check for target equivalence or something else)
     end
 
+    def postUpdate()
+      buildDependencies()  # assuming we have called the compiler already in update giving us the deps string
+    end
     
     def cleanupBeforeDeletion()
       system("rm -f " + @objectFileName)
@@ -541,7 +575,8 @@ module Makr
 
 
     def makeLinkerCallString()
-      @config["linker"] + " " + @config["linker.lFlags"] + " " + @config["linker.libPaths"] + " " + @config["linker.libs"]
+      config = @build.getConfig(@configName)
+      config["linker"] + " " + config["linker.lFlags"] + " " + config["linker.libPaths"] + " " + config["linker.libs"]
     end
 
     
@@ -590,89 +625,121 @@ module Makr
 
   class Build
 
-    attr_reader   :buildPath
-    attr_reader   :taskHashCacheFile
-    attr_accessor :mutex, :globalConfigs
+    attr_reader   :buildPath, :configs
+    attr_accessor :postUpdates
 
 
     # build path should be absolute and is read-only once set in this "ctor"
     def initialize(buildPath) 
       @buildPath     = buildPath
-      @buildPath.freeze # set readonly
       @buildPathMakrDir = @buildPath + "/.makr"
+      @buildPath.freeze # set vars readonly
+      @buildPathMakrDir.freeze
       if not File.directory?(@buildPathMakrDir)
         Dir.mkdir(@buildPathMakrDir)
       end
 
+      @postUpdates = Array.new
+
+      # task hash
       @taskHash      = Hash.new            # maps task names to tasks (names are for example full path file names)
       @taskHashCache = Hash.new            # a cache for the task hash that is loaded below
       @taskHashCacheFile  = @buildPathMakrDir + "/taskHashCache.ruby_marshal_dump"  # where the task hash cache is stored to
       loadTaskHashCache()
 
-      @mutex = Mutex.new
-      @globalConfigs = Hash.new
-      loadAndAssignConfigs()  # loads configs from build dir and assign em to tasks
-    end
-
-
-    def hasTask?(taskName)
-      mutex.synchronize do
-        return (@taskHash.has_key?(taskName) or @taskHashCache.has_key?(taskName))
+      # configs
+      @configs = Hash.new
+      @configsFile  = @buildPathMakrDir + "/config.txt"
+      loadConfigs()  # loads configs from build dir and assign em to tasks
+      if @configs.empty? do
+        @configs["default"] = Config.new("default")
+        @configs["default"]["compiler"] = "g++"
+        @configs["default"]["linker"] = "g++"
       end
     end
 
 
+    def registerPostUpdate(task).
+      @postUpdates.push(task)
+    end
+
+    def doPostUpdates()
+      @postUpdates.each do |task|
+        task.postUpdate()
+      end
+    end
+    
+
+    def hasTask?(taskName)
+      return (@taskHash.has_key?(taskName) or @taskHashCache.has_key?(taskName))
+    end
+
+
     def getTask(taskName)
-      mutex.synchronize do
-        if @taskHash.has_key?(taskName) then
-          return @taskHash[taskName]
-        elsif @taskHashCache.has_key?(taskName) then
-          addTaskPrivate(taskName, @taskHashCache[taskName])  # we make a copy upon request
-          return @taskHash[taskName]  
-        else
-          nil  # return nil, if not found (TODO raise an exception here?)
-        end
+      if @taskHash.has_key?(taskName) then
+        return @taskHash[taskName]
+      elsif @taskHashCache.has_key?(taskName) then
+        addTaskPrivate(taskName, @taskHashCache[taskName])  # we make a copy upon request
+        return @taskHash[taskName]
+      else
+        nil  # return nil, if not found (TODO raise an exception here?)
       end
     end
 
 
     def addTask(taskName, task)
-      mutex.synchronize do
         addTaskPrivate(taskName, task)
-      end
     end
 
     
     def removeTask(taskName)
-      mutex.synchronize do
-        if @taskHash.has_key?(taskName) then # we dont bother about cache here, as cache is overwritten on save to disk
-          @taskHash.delete(taskName)
-        else
-          raise "[makr] BUG: non-existant task removal requested!"
-        end
+      if @taskHash.has_key?(taskName) then # we dont bother about cache here, as cache is overwritten on save to disk
+        @taskHash.delete(taskName)
+      else
+        raise "[makr] removal of non-existant task requested!"
       end
     end
 
     def save()
-      dumpTaskHashCache()
+      dumpTaskHash()
       dumpConfigs()
     end
 
-    def dumpTaskHashCache()
-      mutex.synchronize do
-        # then dump the hash (and not the cache!, this way we get overridden cache next time)
-        File.open(@taskHashCacheFile, "wb") do |dumpFile|
-          Marshal.dump(@taskHash, dumpFile)
+    def hasConfig?(name)
+      return @configs.has_key?(name)
+    end
+    
+    def getConfig(name)
+      @configs[name]
+    end
+
+    def makeNewConfig(name, parentName = nil)
+      if hasConfig?(name) do
+        raise "[makr] config with name " + name + " already existing!"
+      end
+      @configs[name] = Config.new(name)
+      if parentName do
+        if not hasConfig?(parentName) do
+          raise "[makr] config parent with name " + parentName + " not existing!"
         end
+        @configs[name].parent = @configs[parentName]
       end
     end
 
-
+    def deleteConfig(name)
+      if not @configs.has_key?(name) then # we dont bother about cache here, as cache is overwritten on save to disk
+        raise "[makr] removal of non-existant config requested!"
+      else
+        configsToDeleteArray = Array.new
+        currentConfig = @configs[name]
+      end
+    end
+    
   private
 
     def addTaskPrivate(taskName, task)
       if @taskHash.has_key? taskName then
-        Makr.log.warn("Build.addTaskPrivate, taskName exists already!: " + taskName)
+        Makr.log.warn("Build::addTaskPrivate, taskName exists already!: " + taskName)
         return
       end
       @taskHash[taskName] = task   # we dont bother about cache here, as cache is overwritten on save to disk
@@ -686,7 +753,18 @@ module Makr
         addArr.concat(curTask.dependencies.clone)
       end
     end
-  
+
+    
+    def dumpTaskHash()
+      mutex.synchronize do
+        # then dump the hash (and not the cache!, this way we get overridden cache next time)
+        File.open(@taskHashCacheFile, "wb") do |dumpFile|
+          Marshal.dump(@taskHash, dumpFile)
+        end
+      end
+    end
+
+
     def loadTaskHashCache()
       Makr.log.debug("trying to read task hash cache from " + @taskHashCacheFile)
       if File.file?(@taskHashCacheFile)
@@ -718,6 +796,35 @@ module Makr
       end
     end
 
+
+    def loadConfigs()  # loads configs from build dir
+      if File.file?(@configsFile)
+        Makr.log.info("found config file, now restoring\n\n")
+        lines = IO.readlines(@configsFile)
+        lineIndex = 0
+        while lineIndex < lines.size() do
+          config = Config.new("")
+          parentName = nil
+          if not config.input(lines, lineIndex, parentName) do
+            Makr.log.error("parse error in config file before lineIndex: " + lineIndex.to_s)
+            return
+          else
+            if parentName do
+              if not @configs.has_key?(parentName) do
+                Makr.log.error("parent name unknown in config file before lineIndex: " + lineIndex.to_s)
+                return
+              end
+              config.parent = @configs[parentName]
+              @configs[name] = config
+            end
+          end
+        end
+      else
+        Makr.log.warning("could not find or open config file, config needs to be provided!\n\n")
+      end
+    end
+
+    
   end
 
 
