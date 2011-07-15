@@ -162,10 +162,20 @@ module Makr
     def initialize(name, parent = nil) # parent is a config, too
       @name = name
       @parent =  parent
+      if parent do
+        parent.addChild(self)
+      end
       @hash = Hash.new
+      @childs = Array.new
     end
 
-    
+    def unparent() # kind of dtor
+      if @parent do
+        @parent.removeChild(self)
+        @parent = nil
+      end
+    end
+
     def [](key)
       if @hash.has_key?(key) or not @parent then
         # we have the key and return it or we have no parent and return nil (the hash returns nil if it hasnt got the key)
@@ -238,6 +248,16 @@ module Makr
         @hash[splitArr[0]] = splitArr[-1]
       end
       return false # gone through all lines without finding end
+    end
+
+  private
+    
+    def addChild(config)
+      @childs.push(config)
+    end
+
+    def removeChild(config)
+      @childs.delete(config)
     end
 
   end
@@ -700,18 +720,16 @@ module Makr
       end
     end
 
-    def save()
-      dumpTaskHash()
-      dumpConfigs()
-    end
 
     def hasConfig?(name)
       return @configs.has_key?(name)
     end
+
     
     def getConfig(name)
       @configs[name]
     end
+
 
     def makeNewConfig(name, parentName = nil)
       if hasConfig?(name) do
@@ -726,14 +744,12 @@ module Makr
       end
     end
 
-    def deleteConfig(name)
-      if not @configs.has_key?(name) then # we dont bother about cache here, as cache is overwritten on save to disk
-        raise "[makr] removal of non-existant config requested!"
-      else
-        configsToDeleteArray = Array.new
-        currentConfig = @configs[name]
-      end
+    
+    def save(cleanupConfigs = true)
+      dumpTaskHash()
+      dumpConfigs(cleanupConfigs)
     end
+
     
   private
 
@@ -756,11 +772,9 @@ module Makr
 
     
     def dumpTaskHash()
-      mutex.synchronize do
-        # then dump the hash (and not the cache!, this way we get overridden cache next time)
-        File.open(@taskHashCacheFile, "wb") do |dumpFile|
-          Marshal.dump(@taskHash, dumpFile)
-        end
+      # dump the hash (and not the cache!, this way we get cleaned cache next time)
+      File.open(@taskHashCacheFile, "wb") do |dumpFile|
+        Marshal.dump(@taskHash, dumpFile)
       end
     end
 
@@ -821,6 +835,47 @@ module Makr
         end
       else
         Makr.log.warning("could not find or open config file, config needs to be provided!\n\n")
+      end
+    end
+
+
+    def cleanConfigs()
+      saveHash = Hash.new
+      @taskHash.each do |key, value|
+        if value.configName do
+          saveHash[value.configName] = @configs[value.configName]
+          @configs.delete(value.configName)
+        end
+      end
+      # now only Config instance remain in @configs, that have no reference in tasks.
+      # we could delete them all, but some are intermediate nodes in the Config graph
+      # thus we only delete those, that have no childs recursively
+      deletedSomething = true
+      while deletedSomething
+        deletedSomething = false
+        @configs.delete_if do |name, config|
+          if config.childs.empty? do
+            config.unparent()
+            deletedSomething = true
+          else
+            false
+          end
+        end
+      end
+      saveHash.each do |key, value|
+        @configs[key] = value
+      end
+    end
+
+    
+    def dumpConfigs(cleanupConfigs)
+      if cleanupConfigs do
+        cleanConfigs()
+      end
+      File.open(@configsFile, "w") do |dumpFile|
+        @configs.each_value do |value|
+          value.output(dumpFile)
+        end
       end
     end
 
