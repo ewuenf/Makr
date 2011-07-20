@@ -156,26 +156,28 @@ module Makr
   # Keys could follow naming rules like "my.perfect.config.key"
   class Config
 
-    attr_reader   :name, :parent
+    attr_reader   :name, :parent, :childs
 
     
     def initialize(name, parent = nil) # parent is a config, too
       @name = name
       @parent =  parent
-      if parent do
+      if parent then
         parent.addChild(self)
       end
       @hash = Hash.new
       @childs = Array.new
     end
 
+    
     def unparent() # kind of dtor
-      if @parent do
+      if @parent then
         @parent.removeChild(self)
         @parent = nil
       end
     end
 
+    
     def [](key)
       if @hash.has_key?(key) or not @parent then
         # we have the key and return it or we have no parent and return nil (the hash returns nil if it hasnt got the key)
@@ -250,7 +252,7 @@ module Makr
       return false # gone through all lines without finding end
     end
 
-  private
+  protected
     
     def addChild(config)
       @childs.push(config)
@@ -284,8 +286,6 @@ module Makr
       @updateMark = false
       @dependenciesUpdatedCount = 0
       @dependencyWasUpdated = false
-
-      @configName = String.new  # got no config so far
     end
 
     
@@ -335,6 +335,7 @@ module Makr
       false
     end
 
+    
     # postUpdate() is called after all tasks have been "update()"d. Task instances need to register for the
     # postUpdate()-call during the update()-call using Build::registerPostUpdate(task). While update() is called in
     # parallel on the task graph and should not modify the graph, This function is called on all registered tasks in a
@@ -343,6 +344,7 @@ module Makr
     # someone else might get better concepts out of his brain.
     def postUpdate()
     end
+
     
     # can be impletemented by subclasses indicating that this task is no longer valid due to a circumstance such as
     # a missing file
@@ -351,12 +353,14 @@ module Makr
       false
     end
 
-    def printDependencies(prefix)
+    
+    def printDependencies(prefix)  # debugging function
       puts prefix + @name + " deps size: " + @dependencies.size.to_s
       @dependencies.each do |dep|
         dep.printDependencies(prefix + "  ")
       end
     end
+    
 
     def cleanupBeforeDeletion()  # interface mainly for tasks generating targets
     end
@@ -434,11 +438,30 @@ module Makr
   # The input files are dependencies on FileTasks including the source itself. Another dependency exists on the
   # target object file, so that the task rebuilds, if that file was deleted or modified otherwise.
   class CompileTask < Task
+
     
     def makeCompilerCallString()
+      puts "config name is: \"" + @configName + "\""
       config = @build.getConfig(@configName)
-      config["compiler"] + " " + config["compiler.cFlags"] + " " + \
-        config["compiler.defines"] + " " + config["compiler.includePaths"]
+      callString = String.new
+      if not config["compiler"] then
+        raise "need compiler at least!"
+      else
+        callString +=  config["compiler"] + " "
+      end
+      if config["compiler.cFlags"] then
+        callString += config["compiler.cFlags"] + " "
+      end
+      if config["compiler.defines"] then
+        callString += config["compiler.defines"] + " "
+      end
+      if config["compiler.includePaths"] then
+        callString += config["compiler.includePaths"] + " "
+      end
+      if config["compiler.otherOptions"] then
+        callString += config["compiler.otherOptions"] + " "
+      end
+      callString
     end
 
     
@@ -456,14 +479,14 @@ module Makr
 
 
     # the absolute path of the input and output file of the compilation
-    attr_reader :fileName, :objectFileName, :compileTarget, :config
+    attr_reader :fileName, :objectFileName, :compileTarget
 
     
     # build contains the global configuration, see Build.globalConfig and class Config
-    def initialize(fileName, build, config)
+    def initialize(fileName, build, configName)
       @fileName = fileName
       @build = build
-      @config = config
+      @configName = configName
 
       # now we need a unique name for this task. As we're defining a FileTask as dependency to fileName
       # and a FileTask on the @objectFileName to ensure a build of the target if it was deleted or
@@ -486,6 +509,7 @@ module Makr
       Makr.log.debug("made CompileTask with @name=\"" + @name + "\" and output file " + @objectFileName)
     end
 
+    
     def getDepsStringArrayFromCompiler()
       # we use the compiler for now, but maybe fastdep is worth a look / an adaption
       # we are excluding system headers for now (option "-MM"), but that may not bring performance, then use option "-M"
@@ -501,6 +525,7 @@ module Makr
         Makr.log.error("error in CompileTask: \"" + @fileName + "\" making dependencies failed, check file!")
       end
     end
+
     
     def buildDependencies()
       clearDependencies()
@@ -545,14 +570,17 @@ module Makr
       end
       @compileTarget.update() # we call this to update file information on the compiled target
       # we always want this if any dependency changed, as this could mean changed dependencies due to new includes etc.
+      # and as the files needed for this should all be in the OS cache, its good to do this call here
       getDepsStringArrayFromCompiler()
       @build.registerPostUpdate(self)
       return true # right now, we are always true (we could check for target equivalence or something else)
     end
 
+    
     def postUpdate()
       buildDependencies()  # assuming we have called the compiler already in update giving us the deps string
     end
+
     
     def cleanupBeforeDeletion()
       system("rm -f " + @objectFileName)
@@ -595,16 +623,34 @@ module Makr
 
 
     def makeLinkerCallString()
+      puts "config name is: \"" + @configName + "\""
       config = @build.getConfig(@configName)
-      config["linker"] + " " + config["linker.lFlags"] + " " + config["linker.libPaths"] + " " + config["linker.libs"]
+      callString = String.new
+      if not config["linker"] then
+        raise "need linker at least!"
+      else
+        callString +=  config["linker"] + " "
+      end
+      if config["linker.lFlags"] then
+        callString += config["linker.lFlags"] + " "
+      end
+      if config["linker.libPaths"] then
+        callString += config["linker.libPaths"] + " "
+      end
+      if config["linker.libs"] then
+        callString += config["linker.libs"] + " "
+      end
+      if config["linker.otherOptions"] then
+        callString += config["linker.otherOptions"] + " "
+      end
+      callString
     end
 
     
-    def initialize(programName, build, config)
+    def initialize(programName, build)
       @programName = programName
       super(ProgramTask.makeName(@programName))
       @build = build
-      @config = config
 
       if not @build.hasTask?(@programName) then
         @compileTarget = FileTask.new(@programName, false)
@@ -671,7 +717,7 @@ module Makr
       @configs = Hash.new
       @configsFile  = @buildPathMakrDir + "/config.txt"
       loadConfigs()  # loads configs from build dir and assign em to tasks
-      if @configs.empty? do
+      if @configs.empty? then
         @configs["default"] = Config.new("default")
         @configs["default"]["compiler"] = "g++"
         @configs["default"]["linker"] = "g++"
@@ -679,7 +725,7 @@ module Makr
     end
 
 
-    def registerPostUpdate(task).
+    def registerPostUpdate(task)
       @postUpdates.push(task)
     end
 
@@ -731,27 +777,28 @@ module Makr
     end
 
 
-    def makeNewConfig(name, parentName = nil)
-      if hasConfig?(name) do
-        raise "[makr] config with name " + name + " already existing!"
+    def makeNewConfig(name, parentName = "default")
+      if hasConfig?(name) then
+        return getConfig(name)
       end
-      @configs[name] = Config.new(name)
-      if parentName do
-        if not hasConfig?(parentName) do
+      parent = nil
+      if parentName then
+        if not hasConfig?(parentName) then
           raise "[makr] config parent with name " + parentName + " not existing!"
         end
-        @configs[name].parent = @configs[parentName]
+        parent = @configs[parentName]
       end
+      @configs[name] = Config.new(name, parent)
     end
 
     
-    def save(cleanupConfigs = true)
+    def save(cleanupConfigs = false)#true)
       dumpTaskHash()
       dumpConfigs(cleanupConfigs)
     end
 
     
-  private
+  protected
 
     def addTaskPrivate(taskName, task)
       if @taskHash.has_key? taskName then
@@ -819,12 +866,12 @@ module Makr
         while lineIndex < lines.size() do
           config = Config.new("")
           parentName = nil
-          if not config.input(lines, lineIndex, parentName) do
+          if not config.input(lines, lineIndex, parentName) then
             Makr.log.error("parse error in config file before lineIndex: " + lineIndex.to_s)
             return
           else
-            if parentName do
-              if not @configs.has_key?(parentName) do
+            if parentName then
+              if not @configs.has_key?(parentName) then
                 Makr.log.error("parent name unknown in config file before lineIndex: " + lineIndex.to_s)
                 return
               end
@@ -834,15 +881,15 @@ module Makr
           end
         end
       else
-        Makr.log.warning("could not find or open config file, config needs to be provided!\n\n")
+        Makr.log.warn("could not find or open config file, config needs to be provided!\n\n")
       end
     end
 
-
+    
     def cleanConfigs()
       saveHash = Hash.new
       @taskHash.each do |key, value|
-        if value.configName do
+        if value.configName then
           saveHash[value.configName] = @configs[value.configName]
           @configs.delete(value.configName)
         end
@@ -854,7 +901,7 @@ module Makr
       while deletedSomething
         deletedSomething = false
         @configs.delete_if do |name, config|
-          if config.childs.empty? do
+          if config.childs.empty? then
             config.unparent()
             deletedSomething = true
           else
@@ -869,11 +916,12 @@ module Makr
 
     
     def dumpConfigs(cleanupConfigs)
-      if cleanupConfigs do
+      if cleanupConfigs then
         cleanConfigs()
       end
       File.open(@configsFile, "w") do |dumpFile|
-        @configs.each_value do |value|
+        @configs.each do |key, value|
+          puts "key: " + key + " value: " + value.to_s
           value.output(dumpFile)
         end
       end
@@ -881,7 +929,6 @@ module Makr
 
     
   end
-
 
 
 
@@ -931,16 +978,16 @@ module Makr
   
   class CompileTaskGenerator
 
-    def initialize(build, config)
+    def initialize(build, configName)
       @build = build
-      @config = config
+      @configName = configName
     end
     
     def generate(dirName, fileName)
       fullFileName = (dirName + fileName).strip
       compileTaskName = CompileTask.makeName(fullFileName)
-      if not @build.hasTask?(compileTaskName)
-        localTask = CompileTask.new(fullFileName, @build, @config)
+      if not @build.hasTask?(compileTaskName) then
+        localTask = CompileTask.new(fullFileName, @build, @configName)
         @build.addTask(compileTaskName, localTask)
       end
       return @build.getTask(compileTaskName)
@@ -954,8 +1001,8 @@ module Makr
   class RecursiveCompileTaskGenerator
     # expects an absolute path in dirName, where to find the files matching the pattern and adds all CompileTask objects to
     # the taskHash of build and returns the list of CompileTasks made
-    def self.generate(dirName, pattern, build, config)
-      generatorArray = [CompileTaskGenerator.new(build, config)]
+    def self.generate(dirName, pattern, build, configName)
+      generatorArray = [CompileTaskGenerator.new(build, configName)]
       return RecursiveGenerator.generate(dirName, pattern, generatorArray)
     end
   end
@@ -964,12 +1011,12 @@ module Makr
 
   
   class ProgramGenerator
-    def self.generate(dirName, pattern, build, progName, config)
-      compileTasksArray = RecursiveCompileTaskGenerator.generate(dirName, pattern, build, config)
+    def self.generate(dirName, pattern, build, progName, taskConfigName)
+      compileTasksArray = RecursiveCompileTaskGenerator.generate(dirName, pattern, build, taskConfigName)
       Makr.log.debug("compileTasksArray.size: " + compileTasksArray.size.to_s)
       progName.strip!
       programTaskName = ProgramTask.makeName(progName)
-      if not build.hasTask?(programTaskName)
+      if not build.hasTask?(programTaskName) then
         build.addTask(programTaskName, ProgramTask.new(progName, build))
       end
       programTask = build.getTask(programTaskName)
@@ -1002,23 +1049,23 @@ module Makr
           return                          # runnables that start without spawning new ones (which happens below)
         end
         @task.mutex.synchronize do
-          if not @task.updateMark
+          if not @task.updateMark then
             raise "Unexpectedly starting on a task that needs no update!"
           end
           retVal = false
-          if(callUpdate)
+          if callUpdate then
             retVal = @task.update()
           end
           @task.updateMark = false
           @task.dependantTasks.each do |dependantTask|
             dependantTask.mutex.synchronize do
-              if dependantTask.updateMark # only work on dependant tasks that want to be updated eventually
+              if dependantTask.updateMark then # only work on dependant tasks that want to be updated eventually
                 dependantTask.dependencyWasUpdated ||= retVal
                 # if we are the last thread to reach the dependant task, we will run the next thread
                 # on it. The dependant task needs to be updated if at least a single dependency task
                 # was update (which may not be the task of this thread)
                 dependantTask.dependenciesUpdatedCount = dependantTask.dependenciesUpdatedCount + 1
-                if(dependantTask.dependenciesUpdatedCount == dependantTask.dependencies.size)
+                if (dependantTask.dependenciesUpdatedCount == dependantTask.dependencies.size) then
                   updater = Updater.new(dependantTask, @threadPool)
                   @threadPool.execute {updater.run(dependantTask.dependencyWasUpdated)}
                 end
@@ -1062,7 +1109,7 @@ module Makr
       task.dependencyWasUpdated = false
 
       # then collect, if no further deps or recurse
-      if(task.dependencies.empty?)
+      if task.dependencies.empty? then
         collectedTasksWithNoDeps.push(task)
         return
       end
