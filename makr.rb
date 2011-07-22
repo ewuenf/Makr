@@ -211,11 +211,13 @@ module Makr
 
     
     def input(lines, lineIndex, parentName)
+
+       TODO: why doesnt it get the name parsed and stored?
+
+      
       foundStart = false
-      lineIndex -=1  # we first decrease lineIndex as there is no fuckin c-style-for-loop in this language-garbage!
-      while lineIndex < lines.size() do
-        lineIndex +=1
-        line = lines[lineIndex]
+      for i in (lineIndex..(lines.size() - 1)) do
+        line = lines[i]
         # remove whitespace
         line.strip!
         #ignore newlines
@@ -225,8 +227,8 @@ module Makr
         # at first, we need to have a start marker
         if not foundStart then
           if not line.index("start") then
-            Makr.log.error("Config parse error at line nr " + lineCount.to_s)
-            return false
+            Makr.log.error("Config parse error at line nr " + i.to_s)
+            return false, i
           else
             @name = line["start ".length, -2]
             foundStart = true
@@ -240,16 +242,17 @@ module Makr
         end
         # if we find the end marker, we can return true
         if line.index("end") == 0 then
-          return true
+          return true, i
         end
         splitArr = line.split("\"=\"")
         if splitArr.size < 2 then
-          Makr.log.error("Parse error at line nr " + lineIndex.to_s)
-          return false
+          Makr.log.error("Parse error at line nr " + i.to_s)
+          return false, i
         end
         @hash[splitArr[0]] = splitArr[-1]
       end
-      return false # gone through all lines without finding end
+      # gone through all lines, so we return, if start was found anyway and we expected end somewhere
+      return (not foundStart), i 
     end
 
   protected
@@ -778,6 +781,7 @@ module Makr
 
 
     def makeNewConfig(name, parentName = "default")
+      puts name + " " + parentName
       if hasConfig?(name) then
         return getConfig(name)
       end
@@ -791,7 +795,14 @@ module Makr
       @configs[name] = Config.new(name, parent)
     end
 
-    
+
+    def makeNewConfigForTask(name, task)
+      newConf = makeNewConfig(name, task.configName)
+      task.configName = name
+      return newConf
+    end
+
+
     def save(cleanupConfigs = false)#true)
       dumpTaskHash()
       dumpConfigs(cleanupConfigs)
@@ -864,20 +875,26 @@ module Makr
         lines = IO.readlines(@configsFile)
         lineIndex = 0
         while lineIndex < lines.size() do
+          if (not (lines[lineIndex])) or (lines[lineIndex] == "") then
+            lineIndex += 1
+            next
+          end
           config = Config.new("")
           parentName = nil
-          if not config.input(lines, lineIndex, parentName) then
-            Makr.log.error("parse error in config file before lineIndex: " + lineIndex.to_s)
-            return
-          else
+          parsingGood, lineIndex = config.input(lines, lineIndex, parentName)
+          if parsingGood then
+            lineIndex += 1 # go on to next line
             if parentName then
               if not @configs.has_key?(parentName) then
                 Makr.log.error("parent name unknown in config file before lineIndex: " + lineIndex.to_s)
                 return
               end
-              config.parent = @configs[parentName]
-              @configs[name] = config
+              config.parent = @configs[parentName]              
             end
+            @configs[config.name] = config
+          else
+            Makr.log.error("parse error in config file before lineIndex: " + lineIndex.to_s)
+            return
           end
         end
       else
