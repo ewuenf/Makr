@@ -7,6 +7,7 @@ target = arguments.arguments[1]
 
 
 def configure(build, localDir)
+  build.clearConfigs()
   compilerConfig = build.makeNewConfig("CompileTask")
   compilerConfig["compiler.includePaths"] = " -I" + localDir + "/src"
 end
@@ -28,7 +29,9 @@ else
   if (build.hasTask?(compileTaskName)) then
     task = build.getTask(compileTaskName)
     specialConf = build.makeNewConfigForTask(compileTaskName + "_Conf", task)
-    specialConf["compiler.includePaths"] += " -I/usr/include"
+    if (not (specialConf["compiler.includePaths"]).include?(" -I/usr/include") ) then
+      specialConf["compiler.includePaths"] += " -I/usr/include"
+    end
   end
 
   #updateTraverser = Makr::UpdateTraverser.new(2)

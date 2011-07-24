@@ -162,11 +162,18 @@ module Makr
     def initialize(name, parent = nil) # parent is a config, too
       @name = name
       @parent =  parent
-      if parent then
-        parent.addChild(self)
+      if @parent then
+        @parent.addChild(self)
       end
       @hash = Hash.new
       @childs = Array.new
+    end
+
+
+    def setParent(parent)
+      unparent()
+      @parent =  parent
+      @parent.addChild(self)
     end
 
     
@@ -210,12 +217,9 @@ module Makr
     end
 
     
-    def input(lines, lineIndex, parentName)
-
-       TODO: why doesnt it get the name parsed and stored?
-
-      
+    def input(lines, lineIndex)
       foundStart = false
+      parentName = nil
       for i in (lineIndex..(lines.size() - 1)) do
         line = lines[i]
         # remove whitespace
@@ -228,31 +232,31 @@ module Makr
         if not foundStart then
           if not line.index("start") then
             Makr.log.error("Config parse error at line nr " + i.to_s)
-            return false, i
+            return false, i, parentName
           else
-            @name = line["start ".length, -2]
+            @name = line[("start ".length)..-1]
             foundStart = true
             next
           end
         end
         # then we check for a parent
         if line.index("parent") == 0 then
-          parentName = line["parent ".length, -2]
+          parentName = line["parent ".length..-1]
           next
         end
         # if we find the end marker, we can return true
         if line.index("end") == 0 then
-          return true, i
+          return true, i, parentName
         end
         splitArr = line.split("\"=\"")
         if splitArr.size < 2 then
           Makr.log.error("Parse error at line nr " + i.to_s)
-          return false, i
+          return false, i, parentName
         end
-        @hash[splitArr[0]] = splitArr[-1]
+        @hash[(splitArr[0])[1..-1]] = (splitArr[-1])[0..-2]
       end
       # gone through all lines, so we return, if start was found anyway and we expected end somewhere
-      return (not foundStart), i 
+      return (not foundStart), i, parentName
     end
 
   protected
@@ -721,9 +725,7 @@ module Makr
       @configsFile  = @buildPathMakrDir + "/config.txt"
       loadConfigs()  # loads configs from build dir and assign em to tasks
       if @configs.empty? then
-        @configs["default"] = Config.new("default")
-        @configs["default"]["compiler"] = "g++"
-        @configs["default"]["linker"] = "g++"
+        makeDefaultConfig()
       end
     end
 
@@ -770,12 +772,26 @@ module Makr
     end
 
 
+    def clearConfigs()
+      @configs.clear()
+      makeDefaultConfig()
+    end
+
+    def makeDefaultConfig()
+      @configs["default"] = Config.new("default")
+      @configs["default"]["compiler"] = "g++"
+      @configs["default"]["linker"] = "g++"
+    end
+
     def hasConfig?(name)
       return @configs.has_key?(name)
     end
 
     
     def getConfig(name)
+      if not hasConfig?(name) then
+        raise "no such config: " + name
+      end
       @configs[name]
     end
 
@@ -797,6 +813,9 @@ module Makr
 
 
     def makeNewConfigForTask(name, task)
+      if task.configName == name then # already have this config
+        return getConfig(name)
+      end
       newConf = makeNewConfig(name, task.configName)
       task.configName = name
       return newConf
@@ -880,8 +899,7 @@ module Makr
             next
           end
           config = Config.new("")
-          parentName = nil
-          parsingGood, lineIndex = config.input(lines, lineIndex, parentName)
+          parsingGood, lineIndex, parentName = config.input(lines, lineIndex)
           if parsingGood then
             lineIndex += 1 # go on to next line
             if parentName then
@@ -889,9 +907,11 @@ module Makr
                 Makr.log.error("parent name unknown in config file before lineIndex: " + lineIndex.to_s)
                 return
               end
-              config.parent = @configs[parentName]              
+              config.setParent(@configs[parentName])
             end
-            @configs[config.name] = config
+            if config.name != "" then  # we only add configs with a name!
+              @configs[config.name] = config
+            end
           else
             Makr.log.error("parse error in config file before lineIndex: " + lineIndex.to_s)
             return
