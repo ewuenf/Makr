@@ -133,6 +133,10 @@ module Makr
   # own methods / classes follow
 
 
+
+
+
+  
   
   # logging 
   @log = Logger.new(STDOUT)
@@ -141,6 +145,9 @@ module Makr
   end
 
 
+
+
+  
   # FIXME build abort should work from wherever
   def self.abortBuild()
     Makr.log.fatal("Aborting build process.")
@@ -149,6 +156,10 @@ module Makr
 
 
 
+
+
+
+  
   
   # Hierarchical configuration management. Asking for a key will walk up
   # in hierarchy, until key is found or a new entry needs to be created in root config.
@@ -161,10 +172,7 @@ module Makr
     
     def initialize(name, parent = nil) # parent is a config, too
       @name = name
-      @parent =  parent
-      if @parent then
-        @parent.addChild(self)
-      end
+      setParent(parent)
       @hash = Hash.new
       @childs = Array.new
     end
@@ -173,7 +181,7 @@ module Makr
     def setParent(parent)
       unparent()
       @parent =  parent
-      @parent.addChild(self)
+      @parent.addChild(self) if @parent
     end
 
     
@@ -216,7 +224,8 @@ module Makr
       io << "  end " << @name << "\n\n"
     end
 
-    
+    # returns (Boolean,Integer,String) with the meaning:
+    # (parsing ok, last line visited, parent name)
     def input(lines, lineIndex)
       foundStart = false
       parentName = nil
@@ -225,9 +234,7 @@ module Makr
         # remove whitespace
         line.strip!
         #ignore newlines
-        if line.empty? then 
-          next
-        end
+        next if line.empty?
         # at first, we need to have a start marker
         if not foundStart then
           if not line.index("start") then
@@ -272,10 +279,17 @@ module Makr
   end
 
 
+
+
+
+
+  
   
 
   # Basic class and concept representing a node in the dependency tree and any type of action that
-  # needs to be performed (such as a versioning system update or somefingelse)
+  # needs to be performed (such as a versioning system update or somefingelse). A possible configuration
+  # of the task is only referred to by name as I did not want linked data structures, that would be
+  # saved all together upon marshalling in class build. Config class is different.
   class Task
     
     attr_reader :name, :dependencies, :dependantTasks
@@ -337,18 +351,19 @@ module Makr
 
     
     # Every subclass should provide an "update()" function, that returns wether the target of the task is updated/changed.
-    # The task graph should be unchanged during update. Use functions preUpdate() or postUpdate() for this purpose.
+    # The task graph itself should be unchanged during update. Use function postUpdate() for this purpose.
     def update() 
       false
     end
 
     
-    # postUpdate() is called after all tasks have been "update()"d. Task instances need to register for the
-    # postUpdate()-call during the update()-call using Build::registerPostUpdate(task). While update() is called in
-    # parallel on the task graph and should not modify the graph, This function is called on all registered tasks in a
+    # The method postUpdate() is called after all tasks have been "update()"d. Task instances need to register for the
+    # postUpdate()-call during the update()-call using "Build::registerPostUpdate(self)". While update() is called in
+    # parallel on the task graph and should not modify the graph, this function is called on all registered tasks in a
     # single thread, so that no issues with multi-threading can occur. As this obviously is a bottleneck, the function
-    # should only be used, if necessary. This behaviour might change in future revisions of this tool, as the author or
-    # someone else might get better concepts out of his brain.
+    # should only be used if it is absolutely necessary to modify the task structure upon updating procedure.
+    # This behaviour might change in future revisions of this tool, as the author or someone else might get better
+    # concepts out of his brain.
     def postUpdate()
     end
 
@@ -356,34 +371,48 @@ module Makr
     # can be impletemented by subclasses indicating that this task is no longer valid due to a circumstance such as
     # a missing file
     def mustBeDeleted?()
-      Makr.log.debug("mustBeDeleted?() default call.")
       false
     end
 
     
-    def printDependencies(prefix)  # debugging function
-      puts prefix + @name + " deps size: " + @dependencies.size.to_s
+    def printDependencies(prefix)
+      Makr.log.info(prefix + @name + " deps size: " + @dependencies.size.to_s)
       @dependencies.each do |dep|
         dep.printDependencies(prefix + "  ")
       end
     end
     
 
-    def cleanupBeforeDeletion()  # interface mainly for tasks generating targets
+    def cleanupBeforeDeletion()  # interface mainly for tasks generating targets (removing these)
     end
     
   end
+
+
+
+
+
 
 
   
 
   class FileTask < Task
 
+    # this variable states, if file hashes should be used to identify changed files (which can be a costly operation)
+    @@useFileHash = false
+    def FileTask.useFileHash
+      @@useFileHash
+    end
+    def FileTask.useFileHash=(arg)
+      @@useFileHash = arg
+    end
+
+
     attr_reader :fileName, :time, :size, :fileHash, :missingFileIsError # absolute path for fileName expected!
 
     # the boolean argument missingFileIsError can be used to indicate, if an update is necessary, if file is missing 
     # (which is the "false" case) or if it is an error and the build should abort
-    def initialize(fileName, missingFileIsError = true)  # absolute path for fileName expected!
+    def initialize(fileName, missingFileIsError = true)
       @fileName = fileName
       Makr.log.debug("made file task with @fileName=\"" + @fileName + "\"")
       super(@fileName)
@@ -395,11 +424,9 @@ module Makr
     
     # a missing file
     def mustBeDeleted?()
-      if (not File.file?(@fileName))
-        if(@missingFileIsError)
+      if (not File.file?(@fileName)) and (@missingFileIsError) then
           Makr.log.info("mustBeDeleted?() is true for missing file: " + @fileName)
-          return true;
-        end
+          return true
       end
       false
     end
@@ -412,7 +439,7 @@ module Makr
           Makr.abortBuild
         end
         Makr.log.info("FileTask " + fileName + " is missing, so update() is true.")
-        return true;
+        return true
       end
       retValue = false
       curTime = File.stat(@fileName).mtime
@@ -425,10 +452,12 @@ module Makr
         @size = curSize
         retValue = true
       end
-      curHash = MD5.new(open(@fileName, 'rb').read).hexdigest
-      if(@fileHash != curHash)
-        @fileHash = curHash
-        retValue = true
+      if @@useFileHash then
+        curHash = MD5.new(open(@fileName, 'rb').read).hexdigest
+        if(@fileHash != curHash)
+          @fileHash = curHash
+          retValue = true
+        end
       end
       if retValue then
         Makr.log.info("file " + fileName + " has changed")
@@ -441,6 +470,39 @@ module Makr
 
 
 
+
+  
+
+
+
+  # This class represents the dependency on changed configs
+  class ConfigTask < Task
+
+    def initalize(name)
+      super
+      @storedConfigString = String.new
+    end
+    
+    def update()
+      if not dependantTasks.first then
+        raise "ConfigTask \"" + name + "\" does not have a dependant task, but needs one!"
+      end
+      currentConfigString = dependantTasks.first.getConfigString()
+      retVal = (@storedConfigString != currentConfigString)
+      @storedConfigString = currentConfigString
+      retVal
+    end
+    
+  end
+
+
+
+
+
+
+  
+  
+
   # Represents a compiled source that has dependencies to included files (and any deps that a user may specify).
   # The input files are dependencies on FileTasks including the source itself. Another dependency exists on the
   # target object file, so that the task rebuilds, if that file was deleted or modified otherwise.
@@ -448,14 +510,11 @@ module Makr
 
     
     def makeCompilerCallString()
-      puts "config name is: \"" + @configName + "\""
+      Makr.log.debug("config name is: \"" + @configName + "\"")
       config = @build.getConfig(@configName)
-      callString = String.new
-      if not config["compiler"] then
-        raise "need compiler at least!"
-      else
-        callString +=  config["compiler"] + " "
-      end
+      raise "need compiler at least!" if (not config["compiler"])
+      
+      callString = config["compiler"] + " "
       if config["compiler.cFlags"] then
         callString += config["compiler.cFlags"] + " "
       end
@@ -468,25 +527,29 @@ module Makr
       if config["compiler.otherOptions"] then
         callString += config["compiler.otherOptions"] + " "
       end
-      callString
+      return callString
     end
 
+    alias :getConfigString :makeCompilerCallString
     
-    # class vars and functions
+    # this variable influences dependency checking by the compiler ("-M" or "-MM" option)
     @@checkOnlyUserHeaders = false
-    def self.checkOnlyUserHeaders
+    def CompileTask.checkOnlyUserHeaders
       @@checkOnlyUserHeaders
+    end
+    def CompileTask.checkOnlyUserHeaders=(arg)
+      @@checkOnlyUserHeaders = arg
     end
 
     
     # make a unique name for CompileTasks out of the fileName which is to be compiled
-    def self.makeName(fileName)
+    def CompileTask.makeName(fileName)
       "CompileTask__" + fileName
     end
 
 
-    # the absolute path of the input and output file of the compilation
-    attr_reader :fileName, :objectFileName, :compileTarget
+    # the path of the input and output file of the compilation
+    attr_reader :fileName, :objectFileName
 
     
     # build contains the global configuration, see Build.globalConfig and class Config
@@ -509,6 +572,16 @@ module Makr
       else
         @compileTarget = @build.getTask(@objectFileName)
       end
+      # now add another dependency task on the config
+      @configTaskName = "ConfigTask__" + @fileName
+      if not @build.hasTask?(@configTaskName) then
+        @configTask = ConfigTask.new(@configTaskName)
+        @build.addTask(@configTaskName, @configTask)
+      else
+        @configTask = @build.getTask(@configTaskName)
+      end
+      addDependency(@configTask)
+
       # the following first deletes all deps and then constructs them including the @compileTarget
       getDepsStringArrayFromCompiler()
       buildDependencies() 
@@ -519,17 +592,14 @@ module Makr
     
     def getDepsStringArrayFromCompiler()
       # we use the compiler for now, but maybe fastdep is worth a look / an adaption
-      # we are excluding system headers for now (option "-MM"), but that may not bring performance, then use option "-M"
-      dependOption = " -M "
-      if @@checkOnlyUserHeaders
-        dependOption = " -MM "
-      end
-      depCommand = makeCompilerCallString() + dependOption + @fileName
+      # system headers are excluded using compiler option "-MM", else "-M"
+      depCommand = makeCompilerCallString() + ((@@checkOnlyUserHeaders)?" -MM ":" -M ") + @fileName
       Makr.log.info("Executing compiler to check for dependencies in CompileTask: \"" + @fileName + "\"\n\t" + depCommand)
       compilerPipe = IO.popen(depCommand)  # in ruby >= 1.9.2 we could use Open3.capture2(...) for this purpose
       @dependencyLines = compilerPipe.readlines
       if @dependencyLines.empty?
-        Makr.log.error("error in CompileTask: \"" + @fileName + "\" making dependencies failed, check file!")
+        Makr.log.error( "error in CompileTask: \"" + @fileName + \
+                        "\" making dependencies failed, check file for syntax errors!")
       end
     end
 
@@ -567,19 +637,19 @@ module Makr
 
     
     def update()
+      # we always want do dependency checking, when we need to update, as we could have new includes etc.
+      # and as the files needed for this should all be in the OS cache, its good to do this call here
+      getDepsStringArrayFromCompiler()
+      @build.registerPostUpdate(self)
       # construct compiler command and execute it
       compileCommand = makeCompilerCallString() + " -c " + @fileName + " -o " + @objectFileName
       Makr.log.info("Executing compiler in CompileTask: \"" + @fileName + "\"\n\t" + compileCommand)
       successful = system(compileCommand)
-      if not successful
+      if not successfulmakeCompilerCallString
         Makr.log.fatal("compile error, exiting build process\n\n\n")
         abortBuild()
       end
       @compileTarget.update() # we call this to update file information on the compiled target
-      # we always want this if any dependency changed, as this could mean changed dependencies due to new includes etc.
-      # and as the files needed for this should all be in the OS cache, its good to do this call here
-      getDepsStringArrayFromCompiler()
-      @build.registerPostUpdate(self)
       return true # right now, we are always true (we could check for target equivalence or something else)
     end
 
@@ -597,6 +667,11 @@ module Makr
 
 
 
+
+
+  
+
+
   
   class DynamicLibTask < Task
     # special dynamic lib thingies
@@ -607,6 +682,11 @@ module Makr
 
 
 
+
+
+  
+
+
   
   class StaticLibTask < Task
     # special static lib thingies
@@ -614,6 +694,11 @@ module Makr
       raise "Not implemented yet"
     end
   end
+
+
+
+
+
 
 
   
@@ -652,7 +737,7 @@ module Makr
       end
       callString
     end
-
+    alias :getConfigString :makeLinkerCallString
     
     def initialize(programName, build)
       @programName = programName
@@ -666,6 +751,15 @@ module Makr
         @compileTarget = @build.getTask(@programName)
       end
       addDependency(@compileTarget)
+      # now add another dependency task on the config
+      @configTaskName = "ConfigTask__" + @programName
+      if not @build.hasTask?(@configTaskName) then
+        @configTask = ConfigTask.new(@configTaskName)
+        @build.addTask(@configTaskName, @configTask)
+      else
+        @configTask = @build.getTask(@configTaskName)
+      end
+      addDependency(@configTask)
 
       Makr.log.debug("made ProgramTask with @name=\"" + @name + "\"")
     end
@@ -693,6 +787,11 @@ module Makr
     
   end
 
+
+
+
+
+  
   
 
 
@@ -1012,6 +1111,11 @@ module Makr
 
 
 
+
+  
+
+  
+
   
   class CompileTaskGenerator
 
@@ -1033,6 +1137,11 @@ module Makr
   end
 
 
+
+
+
+  
+
   
 
   class RecursiveCompileTaskGenerator
@@ -1044,6 +1153,11 @@ module Makr
     end
   end
 
+
+
+
+
+  
 
 
   
@@ -1067,7 +1181,26 @@ module Makr
 
 
 
+
+
+
+
+
+
+
+
+  
+
+
+
+
+
+  
+
   class UpdateTraverser
+
+
+
     
     class Updater
       
@@ -1158,6 +1291,15 @@ module Makr
 
 
 
+
+
+
+
+
+
+
+  
+
   # script argument management
 
   class ScriptArguments
@@ -1208,6 +1350,12 @@ module Makr
 
 
 
+
+
+
+
+
+  
   
   class SignalHandler
     def self.setSigUsr1()
@@ -1225,7 +1373,17 @@ module Makr
 
 
   
+
+
+  
 end     # end of module makr ######################################################################################
+
+
+
+
+
+
+
 
 
 
@@ -1239,9 +1397,9 @@ end     # end of module makr ###################################################
 ####################################################################################################################
 Makr.log.level = Logger::DEBUG
 Makr.log.formatter = proc { |severity, datetime, progname, msg|
-    "[makr] #{severity} #{msg}\n"
+    "[makr #{severity} #{datetime}]    #{msg}\n"
 }
-Makr.log << "\n\nmakr version 2011.06.18\n\n"  # just give short version notice on every startup (Date-encoded)
+Makr.log << "\n\nmakr version 2011.07.31\n\n"  # just give short version notice on every startup (Date-encoded)
 
 Signal.trap("USR1")  { Makr::SignalHandler.setSigUsr1 }
 
