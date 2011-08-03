@@ -224,8 +224,9 @@ module Makr
       io << "  end " << @name << "\n\n"
     end
 
+    
     # returns (Boolean,Integer,String) with the meaning:
-    # (parsing ok, last line visited, parent name)
+    # (parsing went well, last line visited, parent name)
     def input(lines, lineIndex)
       foundStart = false
       parentName = nil
@@ -266,20 +267,25 @@ module Makr
       return (not foundStart), i, parentName
     end
 
-  protected
     
+  protected
+
+  
     def addChild(config)
       @childs.push(config)
     end
 
+    
     def removeChild(config)
       @childs.delete(config)
     end
 
+    
   end
 
 
 
+  
 
 
 
@@ -385,12 +391,15 @@ module Makr
 
     def cleanupBeforeDeletion()  # interface mainly for tasks generating targets (removing these)
     end
+
     
   end
 
 
 
 
+
+  
 
 
 
@@ -422,7 +431,6 @@ module Makr
     end
 
     
-    # a missing file
     def mustBeDeleted?()
       if (not File.file?(@fileName)) and (@missingFileIsError) then
           Makr.log.info("mustBeDeleted?() is true for missing file: " + @fileName)
@@ -465,6 +473,7 @@ module Makr
       return retValue
     end
 
+    
   end
 
 
@@ -474,8 +483,9 @@ module Makr
   
 
 
+  
 
-  # This class represents the dependency on changed configs
+  # This class represents the dependency on changed strings in a Config, it is used for example in CompileTask
   class ConfigTask < Task
 
     def initalize(name)
@@ -500,12 +510,16 @@ module Makr
 
 
 
+
+
   
   
 
   # Represents a compiled source that has dependencies to included files (and any deps that a user may specify).
   # The input files are dependencies on FileTasks including the source itself. Another dependency exists on the
-  # target object file, so that the task rebuilds, if that file was deleted or modified otherwise.
+  # target object file, so that the task rebuilds, if that file was deleted or modified otherwise. Also the
+  # task has a dependency on the Config object that contains the compiler options etc. so that a change in these
+  # also triggers recompilation (see ConfigTask).
   class CompileTask < Task
 
     
@@ -531,6 +545,7 @@ module Makr
     end
 
     alias :getConfigString :makeCompilerCallString
+
     
     # this variable influences dependency checking by the compiler ("-M" or "-MM" option)
     @@checkOnlyUserHeaders = false
@@ -580,9 +595,8 @@ module Makr
       else
         @configTask = @build.getTask(@configTaskName)
       end
-      addDependency(@configTask)
 
-      # the following first deletes all deps and then constructs them including the @compileTarget
+      # the following first deletes all deps and then constructs them including the @compileTarget and the @configTask
       getDepsStringArrayFromCompiler()
       buildDependencies() 
 
@@ -632,25 +646,30 @@ module Makr
         end
       end
       # need to do this or the compile task dep will be lost each time we build them deps here
-      addDependency(@compileTarget)                                    
+      addDependency(@compileTarget)
+      # we need to add the config task again!
+      addDependency(@configTask)
     end
 
     
     def update()
-      # we always want do dependency checking, when we need to update, as we could have new includes etc.
-      # and as the files needed for this should all be in the OS cache, its good to do this call here
-      getDepsStringArrayFromCompiler()
+      # we do not modify task structure on update and defer this to the postUpdate call like good little children
       @build.registerPostUpdate(self)
+      # we first execute the compiler to deliver an update on the dependent includes. We could do this
+      # in postUpdate, too, but we assume this to be faster, as the files should be in OS cache afterwards and
+      # compilation (the next step) should be faster
+      getDepsStringArrayFromCompiler()
       # construct compiler command and execute it
       compileCommand = makeCompilerCallString() + " -c " + @fileName + " -o " + @objectFileName
       Makr.log.info("Executing compiler in CompileTask: \"" + @fileName + "\"\n\t" + compileCommand)
       successful = system(compileCommand)
-      if not successfulmakeCompilerCallString
+      if not successful then
         Makr.log.fatal("compile error, exiting build process\n\n\n")
         abortBuild()
       end
       @compileTarget.update() # we call this to update file information on the compiled target
-      return true # right now, we are always true (we could check for target equivalence or something else)
+      return true # right now, we are always true (we could check for target equivalence or something else
+                  # and then return false in case the target didnt change (based on file hash))
     end
 
     
@@ -738,6 +757,7 @@ module Makr
       callString
     end
     alias :getConfigString :makeLinkerCallString
+
     
     def initialize(programName, build)
       @programName = programName
@@ -775,9 +795,13 @@ module Makr
         linkCommand += " " + dep.objectFileName
       end
       Makr.log.info("Building programTask \"" + @name + "\"\n\t" + linkCommand)
-      system(linkCommand)  # TODO we dont check for return here. maybe we should?
+      successful = system(linkCommand)
+      if not successful then
+        Makr.log.fatal("linker error, exiting build process\n\n\n")
+        abortBuild()
+      end
       @compileTarget.update() # we call this to update file information on the compiled target
-      return true # this is always updated
+      return true # we could check here for target change like proposed in CompileTask.update
     end
 
     
@@ -798,7 +822,7 @@ module Makr
   class Build
 
     attr_reader   :buildPath, :configs
-    attr_accessor :postUpdates
+    #attr_accessor :postUpdates
 
 
     # build path should be absolute and is read-only once set in this "ctor"
@@ -833,6 +857,7 @@ module Makr
       @postUpdates.push(task)
     end
 
+    
     def doPostUpdates()
       @postUpdates.each do |task|
         task.postUpdate()
@@ -876,12 +901,14 @@ module Makr
       makeDefaultConfig()
     end
 
+    
     def makeDefaultConfig()
       @configs["default"] = Config.new("default")
       @configs["default"]["compiler"] = "g++"
       @configs["default"]["linker"] = "g++"
     end
 
+    
     def hasConfig?(name)
       return @configs.has_key?(name)
     end
@@ -896,14 +923,13 @@ module Makr
 
 
     def makeNewConfig(name, parentName = "default")
-      puts name + " " + parentName
       if hasConfig?(name) then
         return getConfig(name)
       end
       parent = nil
       if parentName then
         if not hasConfig?(parentName) then
-          raise "[makr] config parent with name " + parentName + " not existing!"
+          raise "[makr] requested config parent with name " + parentName + " not existing!"
         end
         parent = @configs[parentName]
       end
@@ -921,7 +947,7 @@ module Makr
     end
 
 
-    def save(cleanupConfigs = false)#true)
+    def save(cleanupConfigs = true)
       dumpTaskHash()
       dumpConfigs(cleanupConfigs)
     end
@@ -1025,7 +1051,7 @@ module Makr
     def cleanConfigs()
       saveHash = Hash.new
       @taskHash.each do |key, value|
-        if value.configName then
+        if value.configName and not (saveHash.has_key?(value.configName)) then # save each config once
           saveHash[value.configName] = @configs[value.configName]
           @configs.delete(value.configName)
         end
