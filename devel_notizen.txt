@@ -17,7 +17,7 @@ Configs werden in Tasks per Namen referenziert, da sie so am flexibelsten
 TODO:
 *****
 
-relative Pfade im Makrfile
+Beispiele aufsplitten
 Unterprojekte möglichst abgetrennt
 pkg-config
 moc-generator

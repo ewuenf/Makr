@@ -759,10 +759,11 @@ module Makr
     alias :getConfigString :makeLinkerCallString
 
     
-    def initialize(programName, build)
+    def initialize(programName, build, configName)
       @programName = programName
       super(ProgramTask.makeName(@programName))
       @build = build
+      @configName = configName
 
       if not @build.hasTask?(@programName) then
         @compileTarget = FileTask.new(@programName, false)
@@ -789,10 +790,9 @@ module Makr
       # build compiler command and execute it
       linkCommand = makeLinkerCallString() + " -o " + @programName
       @dependencies.each do |dep|
-        if dep == @compileTarget then
-          next
+        if dep.instance_variable_defined?("@objectFileName") then
+          linkCommand += " " + dep.objectFileName
         end
-        linkCommand += " " + dep.objectFileName
       end
       Makr.log.info("Building programTask \"" + @name + "\"\n\t" + linkCommand)
       successful = system(linkCommand)
@@ -847,9 +847,6 @@ module Makr
       @configs = Hash.new
       @configsFile  = @buildPathMakrDir + "/config.txt"
       loadConfigs()  # loads configs from build dir and assign em to tasks
-      if @configs.empty? then
-        makeDefaultConfig()
-      end
     end
 
 
@@ -898,14 +895,6 @@ module Makr
 
     def clearConfigs()
       @configs.clear()
-      makeDefaultConfig()
-    end
-
-    
-    def makeDefaultConfig()
-      @configs["default"] = Config.new("default")
-      @configs["default"]["compiler"] = "g++"
-      @configs["default"]["linker"] = "g++"
     end
 
     
@@ -922,7 +911,7 @@ module Makr
     end
 
 
-    def makeNewConfig(name, parentName = "default")
+    def makeNewConfig(name, parentName = nil)
       if hasConfig?(name) then
         return getConfig(name)
       end
@@ -1188,13 +1177,13 @@ module Makr
 
   
   class ProgramGenerator
-    def self.generate(dirName, pattern, build, progName, taskConfigName)
+    def ProgramGenerator.generate(dirName, pattern, build, progName, taskConfigName)
       compileTasksArray = RecursiveCompileTaskGenerator.generate(dirName, pattern, build, taskConfigName)
       Makr.log.debug("compileTasksArray.size: " + compileTasksArray.size.to_s)
       progName.strip!
       programTaskName = ProgramTask.makeName(progName)
       if not build.hasTask?(programTaskName) then
-        build.addTask(programTaskName, ProgramTask.new(progName, build))
+        build.addTask(programTaskName, ProgramTask.new(progName, build, taskConfigName))
       end
       programTask = build.getTask(programTaskName)
       compileTasksArray.each do |compileTask|
@@ -1241,9 +1230,10 @@ module Makr
       # might not be updated, as the argument callUpdate is false, but the algorithm logic
       # still needs to handle dependant tasks for the above reason.
       def run(callUpdate)
-        if SignalHandler.setSigUsr1 then  # if the user sent a signal to this process, then we just exit all
-          return                          # runnables that start without spawning new ones (which happens below)
-        end
+        #if SignalHandler.setSigUsr1 then  # if the user sent a signal to this process, then we just exit all
+        #  puts "returning on signal usr1"
+        #  return                          # runnables that start without spawning new ones (which happens below)
+        #end
         @task.mutex.synchronize do
           if not @task.updateMark then
             raise "Unexpectedly starting on a task that needs no update!"

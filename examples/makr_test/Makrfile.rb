@@ -9,7 +9,9 @@ target = arguments.arguments[1]
 def configure(build, localDir)
   build.clearConfigs()
   compilerConfig = build.makeNewConfig("CompileTask")
+  compilerConfig["compiler"] = "g++"
   compilerConfig["compiler.includePaths"] = " -I" + localDir + "/src"
+  compilerConfig["linker"] = "g++"
 end
 
 
@@ -18,7 +20,7 @@ if(target == "clean")
 else
   # first get build (maybe this can be a global variable already)
   build = Makr::Build.new(buildDir)
-  if not build.hasConfig?("CompileTask") then
+  if build.configs.empty? then
     configure(build, localDir)
   end
 
@@ -34,8 +36,8 @@ else
     end
   end
 
-  #updateTraverser = Makr::UpdateTraverser.new(2)
-  #updateTraverser.traverse(myProgramTask)
+  updateTraverser = Makr::UpdateTraverser.new(2)
+  updateTraverser.traverse(myProgramTask)
 
   build.save()
 end
