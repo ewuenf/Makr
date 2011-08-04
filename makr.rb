@@ -443,10 +443,10 @@ module Makr
     def update()
       if (not File.file?(@fileName))
         if(@missingFileIsError)
-          Makr.log.fatal("file " + fileName + "  is unexpectedly missing!\n\n")
+          Makr.log.fatal("file " + @fileName + "  is unexpectedly missing!\n\n")
           Makr.abortBuild
         end
-        Makr.log.info("FileTask " + fileName + " is missing, so update() is true.")
+        Makr.log.info("FileTask " + @fileName + " is missing, so update() is true.")
         return true
       end
       retValue = false
@@ -627,13 +627,14 @@ module Makr
         end        
         if depLine.include?(':') # the "xyz.o"-target specified by the compiler in the "Makefile"-rule needs to be skipped
           splitArr = depLine.split(": ")
-          dependencyFiles.concat(splitArr[1...splitArr.length])
+          dependencyFiles.concat(splitArr[1].split(" "))
         else
           dependencyFiles.concat(depLine.split(" "))
         end
       end
       dependencyFiles.each do |depFile|
         depFile.strip!
+        next if depFile.empty?
         if @build.hasTask?(depFile) then
           task = @build.getTask(depFile)
           if not @dependencies.include?(task)
@@ -1104,21 +1105,19 @@ module Makr
     end
 
     def self.recursiveGenerate(dirName, pattern, generatorArray, taskCollection)
-      Dir.chdir(dirName)
       # first recurse into sub directories
-      Dir['*/'].each { |subDir| recursiveGenerate(dirName + subDir, pattern, generatorArray, taskCollection) }
+      Dir[dirName + '*/'].each { |subDir| recursiveGenerate(subDir, pattern, generatorArray, taskCollection) }
 
       # then catch all files matching the pattern and add a compile task for each one
-      matchFiles = Dir[pattern]
+      matchFiles = Dir[dirName + pattern]
       matchFiles.each do |fileName|
         generatorArray.each do |generator|
-          task = generator.generate(dirName, fileName)
+          task = generator.generate(fileName)
           if task != nil then
             taskCollection.push(task)
           end
         end
       end
-      Dir.chdir("..")
     end
   end
   
@@ -1139,11 +1138,11 @@ module Makr
       @configName = configName
     end
     
-    def generate(dirName, fileName)
-      fullFileName = (dirName + fileName).strip
-      compileTaskName = CompileTask.makeName(fullFileName)
+    def generate(fileName)
+      fileName.strip!
+      compileTaskName = CompileTask.makeName(fileName)
       if not @build.hasTask?(compileTaskName) then
-        localTask = CompileTask.new(fullFileName, @build, @configName)
+        localTask = CompileTask.new(fileName, @build, @configName)
         @build.addTask(compileTaskName, localTask)
       end
       return @build.getTask(compileTaskName)
@@ -1162,7 +1161,7 @@ module Makr
   class RecursiveCompileTaskGenerator
     # expects an absolute path in dirName, where to find the files matching the pattern and adds all CompileTask objects to
     # the taskHash of build and returns the list of CompileTasks made
-    def self.generate(dirName, pattern, build, configName)
+    def RecursiveCompileTaskGenerator.generate(dirName, pattern, build, configName)
       generatorArray = [CompileTaskGenerator.new(build, configName)]
       return RecursiveGenerator.generate(dirName, pattern, generatorArray)
     end
@@ -1230,10 +1229,10 @@ module Makr
       # might not be updated, as the argument callUpdate is false, but the algorithm logic
       # still needs to handle dependant tasks for the above reason.
       def run(callUpdate)
-        #if SignalHandler.setSigUsr1 then  # if the user sent a signal to this process, then we just exit all
-        #  puts "returning on signal usr1"
-        #  return                          # runnables that start without spawning new ones (which happens below)
-        #end
+        if SignalHandler.sigUsr1Called then  # if the user sent a signal to this process, then we just exit all
+          puts "returning on signal usr1"
+          return                          # runnables that start without spawning new ones (which happens below)
+        end
         @task.mutex.synchronize do
           if not @task.updateMark then
             raise "Unexpectedly starting on a task that needs no update!"
@@ -1331,18 +1330,18 @@ module Makr
   
   class ScriptArgumentsStorage
     @@store = Array.new
-    def self.get()
+    def ScriptArgumentsStorage.get()
       @@store
     end
   end
   
 
-  def self.pushArgs(scriptArguments)
+  def Makr.pushArgs(scriptArguments)
     ScriptArgumentsStorage.get.push(scriptArguments)
   end
 
   
-  def self.popArgs()
+  def Makr.popArgs()
     if (ScriptArgumentsStorage.get.size < 2) then
       Makr.log.fatal "Tried to remove the minimum arguments from stack, exiting!"
       abortBuild()
@@ -1351,13 +1350,13 @@ module Makr
   end
 
   
-  def self.getArgs()
+  def Makr.getArgs()
     ScriptArgumentsStorage.get.last
   end
 
   
   # just a convenience function, loads a Makrfile.rb from the given subDir and executes it
-  def self.makeSubDir(subDir)
+  def Makr.makeSubDir(subDir)
     makrFilePath = subDir + "/Makrfile.rb"
     pushArgs(ScriptArguments.new(makrFilePath, getArgs().arguments))
     Kernel.load(makrFilePath)
@@ -1374,15 +1373,12 @@ module Makr
   
   
   class SignalHandler
-    def self.setSigUsr1()
-      @@sigUsr1Called = true
+    @@sigUsr1Called = false
+    def SignalHandler.sigUsr1Called
+      @@sigUsr1Called
     end
-    def self.getSigUsr1()
-      if @@sigUsr1Called == nil then
-        return false
-      else
-        @@sigUsr1Called
-      end
+    def SignalHandler.sigUsr1Called=(arg)
+      @@sigUsr1Called = arg
     end
   end
 
@@ -1420,7 +1416,7 @@ Makr.log << "\n\nmakr version 2011.07.31\n\n"  # just give short version notice 
 Signal.trap("USR1")  { Makr::SignalHandler.setSigUsr1 }
 
 # now we load the Makrfile.rb and use Kernel.load on them to execute them as ruby scripts
-makrFilePath = Dir.pwd + "/Makrfile.rb"
+makrFilePath = "./Makrfile.rb"
 if File.exist?(makrFilePath) then
   Makr.pushArgs(Makr::ScriptArguments.new(makrFilePath, ARGV))
   Kernel.load(makrFilePath)

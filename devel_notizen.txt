@@ -2,7 +2,7 @@ Fragen/Probleme:
 ***************
 
 Was passiert, wenn ein Unterscript beendet wird mit exit?
-  SystemExit-exception, Multithreading schein ein Problem
+  SystemExit-exception, Multithreading scheint ein Problem zu sein
 
 
 Konzepte:
