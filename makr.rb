@@ -537,12 +537,12 @@ module Makr
   # also triggers recompilation (see also ConfigTask).
   class CompileTask < Task
 
-    
+
     def makeCompilerCallString()
       Makr.log.debug("config name is: \"" + @configName + "\"")
       config = @build.getConfig(@configName)
       raise "[makr] need compiler at least!" if (not config["compiler"])
-      
+
       callString = config["compiler"] + " "
       if config["compiler.cFlags"] then
         callString += config["compiler.cFlags"] + " "
@@ -561,7 +561,7 @@ module Makr
 
     alias :getConfigString :makeCompilerCallString
 
-    
+
     # this variable influences dependency checking by the compiler ("-M" or "-MM" option)
     @@checkOnlyUserHeaders = false
     def CompileTask.checkOnlyUserHeaders
@@ -571,7 +571,7 @@ module Makr
       @@checkOnlyUserHeaders = arg
     end
 
-    
+
     # make a unique name for CompileTasks out of the fileName which is to be compiled
     # expects a Pathname or a String
     def CompileTask.makeName(fileName)
@@ -582,7 +582,7 @@ module Makr
     # the path of the input and output file of the compilation
     attr_reader :fileName, :objectFileName
 
-    
+
     # build contains the global configuration, see Build.globalConfig and class Config
     def initialize(fileName, build, configName)
       @fileName = Makr.cleanPathName(fileName)
@@ -603,7 +603,7 @@ module Makr
         @compileTarget = @build.getTask(@objectFileName)
       end
       # now add another dependency task on the config
-      @configTaskName = ConfigTask.makeName(@fileName)
+      @configTaskName = ConfigTask.makeName(@name)
       if not @build.hasTask?(@configTaskName) then
         @configTask = ConfigTask.new(@configTaskName)
         @build.addTask(@configTaskName, @configTask)
@@ -613,12 +613,12 @@ module Makr
 
       # the following first deletes all deps and then constructs them including the @compileTarget and the @configTask
       getDepsStringArrayFromCompiler()
-      buildDependencies() 
+      buildDependencies()
 
       Makr.log.debug("made CompileTask with @name=\"" + @name + "\"")
     end
 
-    
+
     def getDepsStringArrayFromCompiler()
       # we use the compiler for now, but maybe fastdep is worth a look / an adaption
       # system headers are excluded using compiler option "-MM", else "-M"
@@ -632,7 +632,7 @@ module Makr
       end
     end
 
-    
+
     def buildDependencies()
       clearDependencies()
       dependencyFiles = Array.new
@@ -640,7 +640,7 @@ module Makr
         depLine.strip! # remove white space and newlines
         if depLine.include?('\\') # remove backslash on each line, if present
           depLine.chop!
-        end        
+        end
         if depLine.include?(':') # the "xyz.o"-target specified by the compiler in the "Makefile"-rule needs to be skipped
           splitArr = depLine.split(": ")
           dependencyFiles.concat(splitArr[1].split(" "))
@@ -668,7 +668,7 @@ module Makr
       addDependency(@configTask)
     end
 
-    
+
     def update()
       # we do not modify task structure on update and defer this to the postUpdate call like good little children
       @build.registerPostUpdate(self)
@@ -689,16 +689,130 @@ module Makr
                   # and then return false in case the target didnt change (based on file hash))
     end
 
-    
+
     def postUpdate()
       buildDependencies()  # assuming we have called the compiler already in update giving us the deps string
     end
 
-    
+
     def cleanupBeforeDeletion()
       system("rm -f " + @objectFileName)
     end
+
+  end
+
+
+
+
+
+
+
+
+
+
+  
+  # Represents a task related to the moc-preprozessor from the qt-library.
+  class MocTask < Task
+
+
+    def makeMocCallString()
+      callString = "moc "
+      if @configName then
+        Makr.log.debug("moc config name is: \"" + @configName + "\"")
+        config = @build.getConfig(@configName)
+        if (not config["moc"]) then
+          Makr.log.warning("no moc binary given")
+        else
+          callString = config["moc"] + " "
+        end
+
+        if config["moc.flags"] then
+          callString += config["moc.flags"] + " "
+        end
+      end
+      return callString
+    end
+
+    alias :getConfigString :makeMocCallString
+
+
+    # make a unique name for CompileTasks out of the fileName which is to be compiled
+    # expects a Pathname or a String
+    def MocTask.makeName(fileName)
+      "MocTask__" + fileName
+    end
+
     
+    def MocTask.makeMocFileName(fileName, build, configName)
+      # default pre- and suffix for generated moc file
+      prefix = "" # default is no prefix to allow sort by name in file manager
+      suffix = ".moc_gen.cpp"
+      # check if user supplied other values via config
+      if configName then
+        config = build.getConfig(configName)
+        prefix = config["moc.filePrefix"] if (config["moc.filePrefix"])
+        suffix = config["moc.fileSuffix"] if (config["moc.fileSuffix"])
+      end
+      build.buildPath + "/" + prefix + File.basename(@fileName) + suffix
+    end
+
+
+    # the path of the input and output file of the compilation
+    attr_reader :fileName, :mocFileName
+
+
+    # build contains the global configuration, see Build.globalConfig and class Config
+    def initialize(fileName, build, configName)
+      @fileName = Makr.cleanPathName(fileName)
+      # now we need a unique name for this task. As we're defining a FileTask as dependency to fileName
+      # and a FileTask on the @objectFileName to ensure a build of the target if it was deleted or
+      # otherwise modified (whatever you can think of here), we need a unique name not related to these
+      super(MocTask.makeName(@fileName))
+      @build = build
+      @configName = configName
+      @mocFileName = MocTask.makeMocFileName(@fileName, @build, @configName)
+
+      # now add a dependency task on the moc output file
+      if not @build.hasTask?(@mocFileName) then
+        @mocTarget = FileTask.new(@mocFileName, false)
+        @build.addTask(@mocFileName, @mocTarget)
+      else
+        @mocTarget = @build.getTask(@mocFileName)
+      end
+      addDependency(@mocTarget)
+      # now add another dependency task on the config
+      @configTaskName = ConfigTask.makeName(@name)
+      if not @build.hasTask?(@configTaskName) then
+        @configTask = ConfigTask.new(@configTaskName)
+        @build.addTask(@configTaskName, @configTask)
+      else
+        @configTask = @build.getTask(@configTaskName)
+      end
+      addDependency(@configTask)
+
+      Makr.log.debug("made MocTask with @name=\"" + @name + "\"")
+    end
+
+    
+    def update()
+      # construct compiler command and execute it
+      mocCommand = makeMocCallString() + " -o " + @mocFileName + @fileName
+      Makr.log.info("Executing moc in MocTask: \"" + @name + "\"\n\t" + mocCommand)
+      successful = system(mocCommand)
+      if not successful then
+        Makr.log.fatal("moc error, exiting build process\n\n\n")
+        abortBuild()
+      end
+      @mocTarget.update() # we call this to update file information on the compiled target
+      return true # right now, we are always true (we could check for target equivalence or something else
+                  # and then return false in case the target didnt change (based on file hash))
+    end
+
+
+    def cleanupBeforeDeletion()
+      system("rm -f " + @mocFileName)
+    end
+
   end
 
 
@@ -1167,6 +1281,7 @@ module Makr
       @build = build
       @configName = configName
     end
+
     
     def generate(fileName)
       Makr.cleanPathName(fileName)
@@ -1175,7 +1290,9 @@ module Makr
         localTask = CompileTask.new(fileName, @build, @configName)
         @build.addTask(compileTaskName, localTask)
       end
-      return @build.getTask(compileTaskName)
+      tasks = Array.new
+      tasks.push_back(@build.getTask(compileTaskName))
+      return tasks
     end
     
   end
@@ -1183,6 +1300,35 @@ module Makr
 
 
 
+  class MocTaskGenerator
+
+    def initialize(build, compileTaskConfigName, mocTaskConfigName = nil)
+      @build = build
+      @mocTaskConfigName = mocTaskConfigName
+      @compileTaskConfigName = compileTaskConfigName
+    end
+
+    
+    def generate(fileName)
+      Makr.cleanPathName(fileName)
+      mocTaskName = MocTask.makeName(fileName)
+      if not @build.hasTask?(mocTaskName) then
+        mocTask = MocTask.new(fileName, @build, @mocTaskConfigName)
+        @build.addTask(mocTaskName, mocTask)
+      end
+      mocTask = @build.getTask(mocTaskName)
+      tasks = Array.new
+      tasks.push_back(mocTask)
+      compileTaskName = CompileTask.makeName(mocTask.mocFileName)
+      if not @build.hasTask?(compileTaskName) then
+        compileTask = CompileTask.new(mocTask.mocFileName, @build, @compileTaskConfigName)
+        @build.addTask(compileTaskName, compileTask)
+      end
+      tasks.push_back(@build.getTask(compileTaskName))
+      return tasks
+    end
+
+  end
 
   
 
