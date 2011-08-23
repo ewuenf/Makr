@@ -20,7 +20,7 @@ TODO:
 Beispiele aufsplitten
 Unterprojekte möglichst abgetrennt
 pkg-config
-moc-generator
 exclude-Pattern
-nicht-rekursive Behandlung von VZs
 Hinzufügen von einzelnen Dateien
+Das Durchschleifen des Build vermeiden, globale Variable setzen?
+Named arguments umsetzen?

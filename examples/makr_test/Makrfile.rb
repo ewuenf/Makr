@@ -6,6 +6,7 @@ buildDir = arguments.arguments[0]
 target = arguments.arguments[1]
 
 
+
 def configure(build, localDir)
   build.clearConfigs()
   compilerConfig = build.makeNewConfig("CompileTask")
@@ -24,7 +25,9 @@ else
     configure(build, localDir)
   end
 
-  myProgramTask = Makr::ProgramGenerator.generate(localDir + "/src/", "*.{cpp,cxx,c}", build, buildDir + "/myProgram", "CompileTask")
+  allFiles = Makr::FileCollector.collect(localDir + "/src/", "*.{cpp,cxx}", true)
+  tasks = Makr.applyGenerators(allFiles, [Makr::CompileTaskGenerator.new(build, "CompileTask")])
+  myProgramTask = Makr.makeProgram(buildDir + "/myProgram", build, tasks)
 
   # set special options for a single task
   compileTaskName = Makr::CompileTask.makeName(localDir + "/src/A.cpp")

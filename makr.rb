@@ -333,7 +333,12 @@ module Makr
       # we dont do anything if a task wants to be added twice, they are unique, maybe we should log this
     end
 
-    
+
+    def addDependencies(otherTasks)
+      otherTasks.each {|task| addDependency(task)}
+    end
+
+
     def removeDependency(otherTask)
       if(@dependencies.index(otherTask) != nil)
         otherTask.dependantTasks.delete(self)
@@ -538,25 +543,35 @@ module Makr
   class CompileTask < Task
 
 
-    def makeCompilerCallString()
-      Makr.log.debug("config name is: \"" + @configName + "\"")
-      config = @build.getConfig(@configName)
-      raise "[makr] need compiler at least!" if (not config["compiler"])
-
-      callString = config["compiler"] + " "
-      if config["compiler.cFlags"] then
-        callString += config["compiler.cFlags"] + " "
+    def makeCompilerCallString() # g++ is always default value
+      if @configName then
+        Makr.log.debug("config name is: \"" + @configName + "\"")
+        config = @build.getConfig(@configName)
+        callString = String.new
+        if (not config["compiler"]) then
+          Makr.log.warning("no compiler given, using default g++")
+          callString = "g++ "
+        else
+          callString = config["compiler"] + " "
+        end
+        # now add additionyl flags and options
+        if config["compiler.cFlags"] then
+          callString += config["compiler.cFlags"] + " "
+        end
+        if config["compiler.defines"] then
+          callString += config["compiler.defines"] + " "
+        end
+        if config["compiler.includePaths"] then
+          callString += config["compiler.includePaths"] + " "
+        end
+        if config["compiler.otherOptions"] then
+          callString += config["compiler.otherOptions"] + " "
+        end
+        return callString
+      else
+        Makr.log.warning("no config given, using bare g++")
+        return "g++ "
       end
-      if config["compiler.defines"] then
-        callString += config["compiler.defines"] + " "
-      end
-      if config["compiler.includePaths"] then
-        callString += config["compiler.includePaths"] + " "
-      end
-      if config["compiler.otherOptions"] then
-        callString += config["compiler.otherOptions"] + " "
-      end
-      return callString
     end
 
     alias :getConfigString :makeCompilerCallString
@@ -716,7 +731,7 @@ module Makr
 
 
     def makeMocCallString()
-      callString = "moc "
+      callString = String.new
       if @configName then
         Makr.log.debug("moc config name is: \"" + @configName + "\"")
         config = @build.getConfig(@configName)
@@ -725,10 +740,12 @@ module Makr
         else
           callString = config["moc"] + " "
         end
-
         if config["moc.flags"] then
           callString += config["moc.flags"] + " "
         end
+      else
+        Makr.log.warning("no config given, using default bare moc")
+        callString = "moc "
       end
       return callString
     end
@@ -865,29 +882,37 @@ module Makr
     end
 
 
-    def makeLinkerCallString()
-      puts "config name is: \"" + @configName + "\""
-      config = @build.getConfig(@configName)
-      callString = String.new
-      if not config["linker"] then
-        raise "[makr] need linker at least!"
+    def makeLinkerCallString() # g++ is always default value
+      if @configName then
+        Makr.log.debug("config name is: \"" + @configName + "\"")
+        config = @build.getConfig(@configName)
+        callString = String.new
+        if (not config["linker"]) then
+          Makr.log.warning("no linker command given, using default g++")
+          callString = "g++ "
+        else
+          callString = config["linker"] + " "
+        end
+        # now add other flags and options
+        if config["linker.lFlags"] then
+          callString += config["linker.lFlags"] + " "
+        end
+        if config["linker.libPaths"] then
+          callString += config["linker.libPaths"] + " "
+        end
+        if config["linker.libs"] then
+          callString += config["linker.libs"] + " "
+        end
+        if config["linker.otherOptions"] then
+          callString += config["linker.otherOptions"] + " "
+        end
+        return callString
       else
-        callString +=  config["linker"] + " "
+        Makr.log.warning("no config given, using bare linker g++")
+        return "g++ "
       end
-      if config["linker.lFlags"] then
-        callString += config["linker.lFlags"] + " "
-      end
-      if config["linker.libPaths"] then
-        callString += config["linker.libPaths"] + " "
-      end
-      if config["linker.libs"] then
-        callString += config["linker.libs"] + " "
-      end
-      if config["linker.otherOptions"] then
-        callString += config["linker.otherOptions"] + " "
-      end
-      callString
     end
+
     alias :getConfigString :makeLinkerCallString
 
     
@@ -1229,55 +1254,70 @@ module Makr
 
 
 
+  
 
 
-
-
-
-
-
-  class RecursiveGenerator
+  class FileCollector
 
     # dirName is expected to be a path name
-    def self.generate(dirName, pattern, generatorArray)
-      taskCollection = Array.new
-      recursiveGenerate(dirName, pattern, generatorArray, taskCollection)
-      return taskCollection
+    def FileCollector.collect(dirName, pattern = "*", recurse = true)
+      fileCollection = Array.new
+      privateCollect(dirName, pattern, fileCollection, recurse)
+      return fileCollection
     end
 
-    def self.recursiveGenerate(dirName, pattern, generatorArray, taskCollection)
+    # convenience methods
+    def FileCollector.collectRecursive(dirName, pattern = "*")
+      return FileCollector.collect(dirName, pattern, true)
+    end
+    def FileCollector.collectFlat(dirName, pattern = "*")
+      return FileCollector.collect(dirName, pattern, false)
+    end
+
+    protected
+  
+    def FileCollector.privateCollect(dirName, pattern, fileCollection, recurse)
       Makr.cleanPathName(dirName)
       # first recurse into sub directories
-      Dir[dirName + "/*"].each do |entry|
-        recursiveGenerate(subDir, pattern, generatorArray, taskCollection) if File.directory?(entry)
+      if recurse then
+        Dir[dirName + "/*/"].each do |subDir|
+          privateCollect(subDir, pattern, fileCollection, recurse)
+        end
       end
 
-      # then catch all files matching the pattern and add a compile task for each one
-      matchFiles = Dir[ dirName + "/" + pattern ]
-      matchFiles.each do |fileName|
-        generatorArray.each do |generator|
-          task = generator.generate(fileName)
-          if task != nil then
-            taskCollection.push(task)
-          end
-        end
+      fileCollection.concat(Dir[ dirName + "/" + pattern ])
+    end
+  end
+
+
+
+
+
+  
+
+
+  def Makr.applyGenerators(fileCollection, generatorArray)
+    # first check, if we only have a single file
+    fileCollection = [Makr.cleanPathName(fileCollection)] if fileCollection.kind_of? String
+    tasks = Array.new
+    fileCollection.each do |fileName|
+      generatorArray.each do |gen|
+        genTasks = gen.generate(fileName)
+        tasks.concat(task) if genTasks
       end
     end
   end
-  
 
 
 
 
 
-  
 
-  
 
-  
+
   class CompileTaskGenerator
 
-    def initialize(build, configName)
+    def initialize(build, configName = nil)
       @build = build
       @configName = configName
     end
@@ -1302,7 +1342,7 @@ module Makr
 
   class MocTaskGenerator
 
-    def initialize(build, compileTaskConfigName, mocTaskConfigName = nil)
+    def initialize(build, compileTaskConfigName = nil, mocTaskConfigName = nil)
       @build = build
       @mocTaskConfigName = mocTaskConfigName
       @compileTaskConfigName = compileTaskConfigName
@@ -1330,43 +1370,21 @@ module Makr
 
   end
 
-  
+
+
+
 
   
-
-  class RecursiveCompileTaskGenerator
-    # expects an absolute path in dirName, where to find the files matching the pattern and adds all CompileTask objects to
-    # the taskHash of build and returns the list of CompileTasks made
-    def RecursiveCompileTaskGenerator.generate(dirName, pattern, build, configName)
-      generatorArray = [CompileTaskGenerator.new(build, configName)]
-      return RecursiveGenerator.generate(dirName, pattern, generatorArray)
+  
+  def Makr.makeProgram(progName, build, taskCollection, programConfig = nil)
+    Makr.cleanPathName(progName)
+    programTaskName = ProgramTask.makeName(progName)
+    if not build.hasTask?(programTaskName) then
+      build.addTask(programTaskName, ProgramTask.new(progName, build, taskConfigName))
     end
-  end
-
-
-
-
-
-  
-
-
-  
-  class ProgramGenerator
-    def ProgramGenerator.generate(dirName, pattern, build, progName, taskConfigName)
-      Makr.cleanPathName(dirName)
-      Makr.cleanPathName(progName)
-      compileTasksArray = RecursiveCompileTaskGenerator.generate(dirName, pattern, build, taskConfigName)
-      Makr.log.debug("compileTasksArray.size: " + compileTasksArray.size.to_s)
-      programTaskName = ProgramTask.makeName(progName)
-      if not build.hasTask?(programTaskName) then
-        build.addTask(programTaskName, ProgramTask.new(progName, build, taskConfigName))
-      end
-      programTask = build.getTask(programTaskName)
-      compileTasksArray.each do |compileTask|
-        programTask.addDependency(compileTask)
-      end
-      programTask
-    end
+    progTask = build.getTask(programTaskName)
+    progTask.addDependencies(taskCollection)
+    return progTask
   end
 
 
@@ -1375,12 +1393,6 @@ module Makr
 
 
 
-
-
-
-
-
-  
 
 
 
