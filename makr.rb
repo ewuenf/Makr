@@ -180,7 +180,7 @@ module Makr
 
     attr_reader   :name, :parent, :childs
 
-    
+
     def initialize(name, parent = nil) # parent is a config, too
       @name = name
       setParent(parent)
@@ -195,13 +195,50 @@ module Makr
       @parent.addChild(self) if @parent
     end
 
-    
+
     def unparent() # kind of dtor
       @parent.removeChild(self) if @parent
       @parent = nil
     end
 
-    
+
+    def copyParent(key = nil)
+      return if not @parent
+      if key then
+        tmp = @parent[key]
+        @hash[key] = tmp if tmp
+      else
+        # collect the complete hash from all parents
+        hash = Hash.new
+        @hash = collectHash(hash)
+      end
+    end
+
+
+    def collectHash(hash)
+      # duplicate keyz are resolved in favor of the argument of the merge!-call, which is what we want here
+      # (this way childs overwrite parents keys)
+      hash.merge!(@parent.collectHash(hash))  if @parent
+      hash.merge!(@hash)
+    end
+
+
+    def addUnique(key, value)
+      curVal = [key]
+      if curVal then
+        curVal += value if not curVal.include?(value)
+      else
+        [key] = value
+      end
+    end
+
+
+    def copyAddUnique(key, value)
+      copyParent(key)
+      addUnique(key, value)
+    end
+
+
     def [](key)
       if @hash.has_key?(key) or not @parent then
         # we have the key and return it or we have no parent and return nil (the hash returns nil if it hasnt got the key)
@@ -294,8 +331,28 @@ module Makr
 
 
 
+  class PkgConfig
   
+    def PkgConfig.addIncludes(config, pkgName)
+      command = "pkg-config --cflags " + pkgName
+      config["compiler.cflags"] = `command`
+    end
+    
+    def PkgConfig.addLibs(config, pkgName, static = false)
+      command = "pkg-config --cflags " + (static?" --static ":"") + pkgName
+      config["linker.lflags"] = `command`
+    end
 
+    def getAllLibs()
+      list = `pkg-config --list-all`
+      hash = Hash.new
+      list.each_line do |line|
+        splitArr = line.split
+        hash[splitArr[0]] = splitArr[1..(splitArr.size - 1)].join(" ")
+      end
+      return hash
+    end
+  end
 
 
   
