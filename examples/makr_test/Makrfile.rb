@@ -6,13 +6,15 @@ buildDir = arguments.arguments[0]
 target = arguments.arguments[1]
 
 
-
 def configure(build, localDir)
   build.clearConfigs()
   compilerConfig = build.makeNewConfig("CompileTask")
   compilerConfig["compiler"] = "g++"
   compilerConfig["compiler.includePaths"] = " -I" + localDir + "/src"
   compilerConfig["linker"] = "g++"
+  Makr::PkgConfig.addCFlags(compilerConfig, "libpng")
+  Makr::PkgConfig.addLibs(compilerConfig, "libpng")
+  puts compilerConfig
 end
 
 

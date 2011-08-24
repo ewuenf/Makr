@@ -14,7 +14,7 @@ require 'find'
 require 'thread'
 require 'md5'
 require 'logger'
-
+require 'stringio'
 
 
 
@@ -224,11 +224,11 @@ module Makr
 
 
     def addUnique(key, value)
-      curVal = [key]
+      curVal = @hash[key]
       if curVal then
         curVal += value if not curVal.include?(value)
       else
-        [key] = value
+        @hash[key] = value
       end
     end
 
@@ -257,6 +257,13 @@ module Makr
       @hash[key] = value
     end
 
+    
+    def to_s
+      stringio = StringIO.new
+      output(stringio)
+      stringio.string
+    end
+    
 
     def output(io)
       io << "  start " << @name << "\n"
@@ -329,21 +336,32 @@ module Makr
     
   end
 
+  
+  
+  
+   
+  
+  
+  
+  
+  
+  
 
 
   class PkgConfig
   
-    def PkgConfig.addIncludes(config, pkgName)
-      command = "pkg-config --cflags " + pkgName
-      config["compiler.cflags"] = `command`
+    def PkgConfig.addCFlags(config, pkgName)
+      config.addUnique("compiler.cFlags", " " + (`pkg-config --cflags #{pkgName}`).strip!)
     end
     
+    
     def PkgConfig.addLibs(config, pkgName, static = false)
-      command = "pkg-config --cflags " + (static?" --static ":"") + pkgName
-      config["linker.lflags"] = `command`
+      command = "pkg-config --libs " + ((static)?" --static ":"") + pkgName
+      config.addUnique("linker.lFlags", " " + (`#{command}`).strip!)
     end
 
-    def getAllLibs()
+    
+    def PkgConfig.getAllLibs()
       list = `pkg-config --list-all`
       hash = Hash.new
       list.each_line do |line|
@@ -355,6 +373,9 @@ module Makr
   end
 
 
+  
+  
+  
   
   
 
@@ -1360,9 +1381,10 @@ module Makr
     fileCollection.each do |fileName|
       generatorArray.each do |gen|
         genTasks = gen.generate(fileName)
-        tasks.concat(task) if genTasks
+        tasks.concat(genTasks) if genTasks
       end
     end
+    return tasks
   end
 
 
@@ -1388,7 +1410,7 @@ module Makr
         @build.addTask(compileTaskName, localTask)
       end
       tasks = Array.new
-      tasks.push_back(@build.getTask(compileTaskName))
+      tasks.push(@build.getTask(compileTaskName))
       return tasks
     end
     
@@ -1415,13 +1437,13 @@ module Makr
       end
       mocTask = @build.getTask(mocTaskName)
       tasks = Array.new
-      tasks.push_back(mocTask)
+      tasks.push(mocTask)
       compileTaskName = CompileTask.makeName(mocTask.mocFileName)
       if not @build.hasTask?(compileTaskName) then
         compileTask = CompileTask.new(mocTask.mocFileName, @build, @compileTaskConfigName)
         @build.addTask(compileTaskName, compileTask)
       end
-      tasks.push_back(@build.getTask(compileTaskName))
+      tasks.push(@build.getTask(compileTaskName))
       return tasks
     end
 
@@ -1437,7 +1459,7 @@ module Makr
     Makr.cleanPathName(progName)
     programTaskName = ProgramTask.makeName(progName)
     if not build.hasTask?(programTaskName) then
-      build.addTask(programTaskName, ProgramTask.new(progName, build, taskConfigName))
+      build.addTask(programTaskName, ProgramTask.new(progName, build, programConfig))
     end
     progTask = build.getTask(programTaskName)
     progTask.addDependencies(taskCollection)
