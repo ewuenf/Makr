@@ -4,7 +4,7 @@
 # This is my own home-brewn ruby-based build tool.
 # I hereby name it "makr" and it will read "Makrfiles", uenf!
 #
-# Documentation is sparse as source is short and a number
+# Documentation is sparse as source is short and readable and a number
 # of examples are/willbe provided.
 
 
@@ -160,7 +160,7 @@ module Makr
 
   def Makr.cleanPathName(pathName)
     if pathName.empty? then
-      Makr.log.waring("Trying to clean empty pathName!")
+      Makr.log.warn("Trying to clean empty pathName!")
       return pathName
     end
     pathName.strip! # remove white space in front and at the end
@@ -627,7 +627,7 @@ module Makr
         config = @build.getConfig(@configName)
         callString = String.new
         if (not config["compiler"]) then
-          Makr.log.warning("no compiler given, using default g++")
+          Makr.log.warn("no compiler given, using default g++")
           callString = "g++ "
         else
           callString = config["compiler"] + " "
@@ -647,7 +647,7 @@ module Makr
         end
         return callString
       else
-        Makr.log.warning("no config given, using bare g++")
+        Makr.log.warn("no config given, using bare g++")
         return "g++ "
       end
     end
@@ -814,7 +814,7 @@ module Makr
         Makr.log.debug("moc config name is: \"" + @configName + "\"")
         config = @build.getConfig(@configName)
         if (not config["moc"]) then
-          Makr.log.warning("no moc binary given")
+          Makr.log.warn("no moc binary given")
         else
           callString = config["moc"] + " "
         end
@@ -822,7 +822,7 @@ module Makr
           callString += config["moc.flags"] + " "
         end
       else
-        Makr.log.warning("no config given, using default bare moc")
+        Makr.log.warn("no config given, using default bare moc")
         callString = "moc "
       end
       return callString
@@ -966,7 +966,7 @@ module Makr
         config = @build.getConfig(@configName)
         callString = String.new
         if (not config["linker"]) then
-          Makr.log.warning("no linker command given, using default g++")
+          Makr.log.warn("no linker command given, using default g++")
           callString = "g++ "
         else
           callString = config["linker"] + " "
@@ -986,7 +986,7 @@ module Makr
         end
         return callString
       else
-        Makr.log.warning("no config given, using bare linker g++")
+        Makr.log.warn("no config given, using bare linker g++")
         return "g++ "
       end
     end
@@ -1210,14 +1210,14 @@ module Makr
 
 
     def loadTaskHashCache()
-      Makr.log.debug("trying to read task hash cache from " + @taskHashCacheFile)
+      Makr.log.info("trying to read task hash cache from " + @taskHashCacheFile)
       if File.file?(@taskHashCacheFile) then
-        Makr.log.debug("found task hash cache file, now restoring\n\n")
+        Makr.log.info("found task hash cache file, now restoring")
         File.open(@taskHashCacheFile, "rb") do |dumpFile|
           @taskHashCache = Marshal.load(dumpFile)
         end
       else
-        Makr.log.debug("could not find or open taskHash file, tasks will be setup new!\n\n")
+        Makr.log.info("could not find or open taskHash file, tasks will be setup new!")
       end
       cleanTaskHashCache()
     end
@@ -1243,7 +1243,7 @@ module Makr
 
     def loadConfigs()  # loads configs from build dir
       if File.file?(@configsFile) then
-        Makr.log.info("found config file, now restoring\n\n")
+        Makr.log.info("found config file, now restoring")
         lines = IO.readlines(@configsFile)
         lineIndex = 0
         while lineIndex < lines.size() do
@@ -1276,7 +1276,7 @@ module Makr
           end
         end
       else
-        Makr.log.warn("could not find or open config file, config needs to be provided!\n\n")
+        Makr.log.info("could not find or open config file.")
       end
     end
 
@@ -1316,7 +1316,6 @@ module Makr
       end
       File.open(@configsFile, "w") do |dumpFile|
         @configs.each do |key, value|
-          puts "key: " + key + " value: " + value.to_s
           value.output(dumpFile)
         end
       end
@@ -1679,7 +1678,7 @@ Makr.log.level = Logger::DEBUG
 Makr.log.formatter = proc { |severity, datetime, progname, msg|
     "[makr #{severity} #{datetime}]    #{msg}\n"
 }
-Makr.log << "\n\nmakr version 2011.07.31\n\n"  # just give short version notice on every startup (Date-encoded)
+Makr.log << "\n\nmakr version 2011.08.26\n\n"  # just give short version notice on every startup (Date-encoded)
 
 Signal.trap("USR1")  { Makr::SignalHandler.setSigUsr1 }
 
