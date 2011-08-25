@@ -17,10 +17,7 @@ Configs werden in Tasks per Namen referenziert, da sie so am flexibelsten
 TODO:
 *****
 
-Beispiele aufsplitten
+Beispiele aufsplitten oder alle Möglichkeiten in einem großem Beispiel-Makrfile (oder beides ;-) )
 Unterprojekte möglichst abgetrennt
-pkg-config
-exclude-Pattern
-Hinzufügen von einzelnen Dateien
 Das Durchschleifen des Build vermeiden, globale Variable setzen?
 Named arguments umsetzen?

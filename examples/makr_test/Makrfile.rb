@@ -28,7 +28,9 @@ else
   end
 
   allFiles = Makr::FileCollector.collect(localDir + "/src/", "*.{cpp,cxx}", true)
+  #allFiles = Makr::FileCollector.collectExclude(localDir + "/src/", "*", "*.h", true)
   tasks = Makr.applyGenerators(allFiles, [Makr::CompileTaskGenerator.new(build, "CompileTask")])
+  #tasks.concat(Makr.applyGenerators(localDir + "/src/myfile.txtcpp", [Makr::CompileTaskGenerator.new(build, "CompileTask")]) # single file usage
   myProgramTask = Makr.makeProgram(buildDir + "/myProgram", build, tasks)
 
   # set special options for a single task

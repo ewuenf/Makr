@@ -1339,7 +1339,7 @@ module Makr
     # dirName is expected to be a path name
     def FileCollector.collect(dirName, pattern = "*", recurse = true)
       fileCollection = Array.new
-      privateCollect(dirName, pattern, fileCollection, recurse)
+      privateCollect(dirName, pattern, nil, fileCollection, recurse)  # exclusion pattern is empty
       return fileCollection
     end
 
@@ -1351,18 +1351,31 @@ module Makr
       return FileCollector.collect(dirName, pattern, false)
     end
 
+    def FileCollector.collectExclude(dirName, pattern, exclusionPattern, recurse = true)
+      fileCollection = Array.new
+      privateCollect(dirName, pattern, exclusionPattern, fileCollection, recurse)
+      return fileCollection
+    end
+
     protected
   
-    def FileCollector.privateCollect(dirName, pattern, fileCollection, recurse)
+    def FileCollector.privateCollect(dirName, pattern, exclusionPattern, fileCollection, recurse)
       Makr.cleanPathName(dirName)
       # first recurse into sub directories
       if recurse then
         Dir[dirName + "/*/"].each do |subDir|
-          privateCollect(subDir, pattern, fileCollection, recurse)
+          privateCollect(subDir, pattern, exclusionPattern, fileCollection, recurse)
         end
       end
-
-      fileCollection.concat(Dir[ dirName + "/" + pattern ])
+      if exclusionPattern and not exclusionPattern.empty? then
+        files = Dir[ dirName + "/" + pattern ]
+        exclusionFiles = Dir[ dirName + "/" + exclusionPattern ]
+        files.each do |fileName|
+          fileCollection.push(fileName) if (File.file?(fileName) and not exclusionFiles.include?(fileName))
+        end
+      else
+        fileCollection.concat(Dir[ dirName + "/" + pattern ])
+      end
     end
   end
 
@@ -1372,7 +1385,7 @@ module Makr
 
   
 
-
+  # can be called with an array of file names or a single file name
   def Makr.applyGenerators(fileCollection, generatorArray)
     # first check, if we only have a single file
     fileCollection = [Makr.cleanPathName(fileCollection)] if fileCollection.kind_of? String
@@ -1385,6 +1398,8 @@ module Makr
     end
     return tasks
   end
+
+
 
 
 
