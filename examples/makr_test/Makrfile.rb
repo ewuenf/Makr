@@ -43,8 +43,7 @@ else
     end
   end
 
-  updateTraverser = Makr::UpdateTraverser.new(2)
-  updateTraverser.traverse(myProgramTask)
-
+  #build.nrOfThreads = 2
+  build.build()
   build.save()
 end

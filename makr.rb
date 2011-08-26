@@ -28,7 +28,7 @@ module Makr
 
 
 
-  
+
   # slightly modified from https://github.com/fizx/thread_pool #########################################
   class ThreadPool
     class Executor
@@ -63,14 +63,14 @@ module Makr
 
     attr_accessor :queue_limit
 
-    # Initialize with number of threads to run
-    def initialize(count, queue_limit = 0)
+    # Initialize with count threads to run (if count is not given, all processors of the system will be used)
+    def initialize(count = nil, queue_limit = 0)
       @mutex = Mutex.new
       @executors = []
       @queue = []
       @queue_limit = queue_limit
-      @count = count
-      count.times { @executors << Executor.new(@queue, @mutex) }
+      @count = (count)?count:`grep -c processor /proc/cpuinfo`.to_i  # TODO works only on linux (and maybe most unixes)
+      @count.times { @executors << Executor.new(@queue, @mutex) }
     end
 
     # Runs the block at some time in the near future
@@ -136,8 +136,8 @@ module Makr
 
 
 
-  
-  
+
+
   # logging 
   @log = Logger.new(STDOUT)
   def self.log()
@@ -147,7 +147,7 @@ module Makr
 
 
 
-  
+
   # FIXME build abort should work from wherever
   def self.abortBuild()
     Makr.log.fatal("Aborting build process.")
@@ -170,8 +170,8 @@ module Makr
 
 
 
-  
-  
+
+
   # Hierarchical configuration management. Asking for a key will walk up
   # in hierarchy, until key is found or a new entry needs to be created in root config.
   # Hierarchy is with single parent. Regarding construction and usage of configs see class Build.
@@ -250,20 +250,20 @@ module Makr
       end
     end
 
-    
+
     def []=(key, value)
       # we always assign, regardless of the parent, which may have the same key, as the keys
       # in this class override the parents keys (see also [](key))
       @hash[key] = value
     end
 
-    
+
     def to_s
       stringio = StringIO.new
       output(stringio)
       stringio.string
     end
-    
+
 
     def output(io)
       io << "  start " << @name << "\n"
@@ -277,7 +277,7 @@ module Makr
       io << "  end " << @name << "\n\n"
     end
 
-    
+
     # returns (Boolean,Integer,String) with the meaning:
     # (parsing went well, last line visited, parent name)
     def input(lines, lineIndex)
@@ -320,28 +320,28 @@ module Makr
       return (not foundStart), i, parentName
     end
 
-    
+
   protected # comparable to private in C++
 
-  
+
     def addChild(config)
       @childs.push(config)
     end
 
-    
+
     def removeChild(config)
       @childs.delete(config)
     end
 
-    
+
   end
 
-  
-  
-  
-   
-  
-  
+
+
+
+
+
+
   
   
   
@@ -808,6 +808,14 @@ module Makr
   class MocTask < Task
 
 
+    def MocTask.containsQ_OBJECTMacro?(fileName)
+      IO.readlines(fileName).each do |line|
+        return true if (found = (line.strip == "Q_OBJECT"))
+      end
+      return false
+    end
+
+
     def makeMocCallString()
       callString = String.new
       if @configName then
@@ -901,6 +909,11 @@ module Makr
       @mocTarget.update() # we call this to update file information on the compiled target
       return true # right now, we are always true (we could check for target equivalence or something else
                   # and then return false in case the target didnt change (based on file hash))
+    end
+
+
+    def mustBeDeleted?()
+      return MocTask.containsQ_OBJECTMacro?(@fileName)
     end
 
 
@@ -1057,8 +1070,8 @@ module Makr
 
   class Build
 
-    attr_reader   :buildPath, :configs
-    #attr_accessor :postUpdates
+    attr_reader   :buildPath, :configs, :postUpdates
+    attr_accessor :defaultTask, :nrOfThreads
 
 
     # build path should be absolute and is read-only once set in this "ctor"
@@ -1086,8 +1099,37 @@ module Makr
       @configs = Hash.new
       @configsFile  = @buildPathMakrDir + "/config.txt"
       loadConfigs()  # loads configs from build dir and assign em to tasks
+
+      @defaultTask = nil
+      @nrOfThreads = nil
     end
 
+
+    def build(taskName = nil)
+      updateTraverser = UpdateTraverser.new(@nrOfThreads)
+      if taskName.kind_of? String then
+        raise("unknown taskName: " + taskName) if not hasTask?(taskName)
+        updateTraverser.traverse(getTask(taskName))
+        return
+      else
+        # check default task or search for a single task without dependant tasks (but give warning)
+        if @defaultTask.kind_of? Task then
+          updateTraverser.traverse(@defaultTask)
+        else
+          Makr.log.warn("no (default) task given for build, searching for root task")
+          taskFound = Array.new
+          @taskHash.each_value do |value|
+            taskFound.push(value) if value.dependantTasks.empty?
+          end
+          if taskFount.size == 1 then
+            updateTraverser.traverse(taskFound.first)
+          else
+            raise "failed with all fallbacks in Build.build"
+          end
+        end
+      end
+    end
+    
 
     def registerPostUpdate(task)
       @postUpdates.push(task)
@@ -1180,7 +1222,7 @@ module Makr
       dumpConfigs(cleanupConfigs)
     end
 
-    
+
   protected
 
     def addTaskPrivate(taskName, task)
@@ -1331,165 +1373,6 @@ module Makr
 
 
 
-  
-
-
-  class FileCollector
-
-    # dirName is expected to be a path name
-    def FileCollector.collect(dirName, pattern = "*", recurse = true)
-      fileCollection = Array.new
-      privateCollect(dirName, pattern, nil, fileCollection, recurse)  # exclusion pattern is empty
-      return fileCollection
-    end
-
-    # convenience methods
-    def FileCollector.collectRecursive(dirName, pattern = "*")
-      return FileCollector.collect(dirName, pattern, true)
-    end
-    def FileCollector.collectFlat(dirName, pattern = "*")
-      return FileCollector.collect(dirName, pattern, false)
-    end
-
-    def FileCollector.collectExclude(dirName, pattern, exclusionPattern, recurse = true)
-      fileCollection = Array.new
-      privateCollect(dirName, pattern, exclusionPattern, fileCollection, recurse)
-      return fileCollection
-    end
-
-    protected
-  
-    def FileCollector.privateCollect(dirName, pattern, exclusionPattern, fileCollection, recurse)
-      Makr.cleanPathName(dirName)
-      # first recurse into sub directories
-      if recurse then
-        Dir[dirName + "/*/"].each do |subDir|
-          privateCollect(subDir, pattern, exclusionPattern, fileCollection, recurse)
-        end
-      end
-      if exclusionPattern and not exclusionPattern.empty? then
-        files = Dir[ dirName + "/" + pattern ]
-        exclusionFiles = Dir[ dirName + "/" + exclusionPattern ]
-        files.each do |fileName|
-          fileCollection.push(fileName) if (File.file?(fileName) and not exclusionFiles.include?(fileName))
-        end
-      else
-        fileCollection.concat(Dir[ dirName + "/" + pattern ])
-      end
-    end
-  end
-
-
-
-
-
-  
-
-  # can be called with an array of file names or a single file name
-  def Makr.applyGenerators(fileCollection, generatorArray)
-    # first check, if we only have a single file
-    fileCollection = [Makr.cleanPathName(fileCollection)] if fileCollection.kind_of? String
-    tasks = Array.new
-    fileCollection.each do |fileName|
-      generatorArray.each do |gen|
-        genTasks = gen.generate(fileName)
-        tasks.concat(genTasks) if genTasks
-      end
-    end
-    return tasks
-  end
-
-
-
-
-
-
-
-
-
-
-  class CompileTaskGenerator
-
-    def initialize(build, configName = nil)
-      @build = build
-      @configName = configName
-    end
-
-    
-    def generate(fileName)
-      Makr.cleanPathName(fileName)
-      compileTaskName = CompileTask.makeName(fileName)
-      if not @build.hasTask?(compileTaskName) then
-        localTask = CompileTask.new(fileName, @build, @configName)
-        @build.addTask(compileTaskName, localTask)
-      end
-      tasks = Array.new
-      tasks.push(@build.getTask(compileTaskName))
-      return tasks
-    end
-    
-  end
-
-
-
-
-  class MocTaskGenerator
-
-    def initialize(build, compileTaskConfigName = nil, mocTaskConfigName = nil)
-      @build = build
-      @mocTaskConfigName = mocTaskConfigName
-      @compileTaskConfigName = compileTaskConfigName
-    end
-
-    
-    def generate(fileName)
-      Makr.cleanPathName(fileName)
-      mocTaskName = MocTask.makeName(fileName)
-      if not @build.hasTask?(mocTaskName) then
-        mocTask = MocTask.new(fileName, @build, @mocTaskConfigName)
-        @build.addTask(mocTaskName, mocTask)
-      end
-      mocTask = @build.getTask(mocTaskName)
-      tasks = Array.new
-      tasks.push(mocTask)
-      compileTaskName = CompileTask.makeName(mocTask.mocFileName)
-      if not @build.hasTask?(compileTaskName) then
-        compileTask = CompileTask.new(mocTask.mocFileName, @build, @compileTaskConfigName)
-        @build.addTask(compileTaskName, compileTask)
-      end
-      tasks.push(@build.getTask(compileTaskName))
-      return tasks
-    end
-
-  end
-
-
-
-
-
-  
-  
-  def Makr.makeProgram(progName, build, taskCollection, programConfig = nil)
-    Makr.cleanPathName(progName)
-    programTaskName = ProgramTask.makeName(progName)
-    if not build.hasTask?(programTaskName) then
-      build.addTask(programTaskName, ProgramTask.new(progName, build, programConfig))
-    end
-    progTask = build.getTask(programTaskName)
-    progTask.addDependencies(taskCollection)
-    return progTask
-  end
-
-
-
-
-
-
-
-
-
-
-
 
   
 
@@ -1545,7 +1428,7 @@ module Makr
     end # end of nested class Updater
 
     
-    def initialize(nrOfThreadsInPool)
+    def initialize(nrOfThreadsInPool = nil)
       @threadPool = ThreadPool.new(nrOfThreadsInPool)
     end
     
@@ -1584,6 +1467,186 @@ module Makr
     end
     
   end
+
+
+
+
+
+
+
+
+
+
+
+
+
+  # build construction helper classes
+
+
+  class FileCollector
+
+    # dirName is expected to be a path name
+    def FileCollector.collect(dirName, pattern = "*", recurse = true)
+      fileCollection = Array.new
+      privateCollect(dirName, pattern, nil, fileCollection, recurse)  # exclusion pattern is empty
+      return fileCollection
+    end
+
+    # convenience methods
+    def FileCollector.collectRecursive(dirName, pattern = "*")
+      return FileCollector.collect(dirName, pattern, true)
+    end
+    def FileCollector.collectFlat(dirName, pattern = "*")
+      return FileCollector.collect(dirName, pattern, false)
+    end
+
+    def FileCollector.collectExclude(dirName, pattern, exclusionPattern, recurse = true)
+      fileCollection = Array.new
+      privateCollect(dirName, pattern, exclusionPattern, fileCollection, recurse)
+      return fileCollection
+    end
+
+    protected
+  
+    def FileCollector.privateCollect(dirName, pattern, exclusionPattern, fileCollection, recurse)
+      Makr.cleanPathName(dirName)
+      # first recurse into sub directories
+      if recurse then
+        Dir[dirName + "/*/"].each do |subDir|
+          privateCollect(subDir, pattern, exclusionPattern, fileCollection, recurse)
+        end
+      end
+      if exclusionPattern and not exclusionPattern.empty? then
+        files = Dir[ dirName + "/" + pattern ]
+        exclusionFiles = Dir[ dirName + "/" + exclusionPattern ]
+        files.each do |fileName|
+          fileCollection.push(fileName) if (File.file?(fileName) and not exclusionFiles.include?(fileName))
+        end
+      else
+        fileCollection.concat(Dir[ dirName + "/" + pattern ])
+      end
+    end
+  end
+
+
+
+
+
+  
+
+  class CompileTaskGenerator
+
+    def initialize(build, configName = nil)
+      @build = build
+      @configName = configName
+    end
+
+    
+    def generate(fileName)
+      Makr.cleanPathName(fileName)
+      compileTaskName = CompileTask.makeName(fileName)
+      if not @build.hasTask?(compileTaskName) then
+        localTask = CompileTask.new(fileName, @build, @configName)
+        @build.addTask(compileTaskName, localTask)
+      end
+      tasks = Array.new
+      tasks.push(@build.getTask(compileTaskName))
+      return tasks
+    end
+    
+  end
+
+
+
+
+  class MocTaskGenerator
+
+    def initialize(build, compileTaskConfigName = nil, mocTaskConfigName = nil)
+      @build = build
+      @mocTaskConfigName = mocTaskConfigName
+      @compileTaskConfigName = compileTaskConfigName
+    end
+
+
+    def generate(fileName)
+      # first check, if file has Q_OBJECT, otherwise we return no tasks
+      return nil if not MocTask.containsQ_OBJECTMacro?(fileName)
+
+      # Q_OBJECT contained, no go on
+      Makr.cleanPathName(fileName)
+      mocTaskName = MocTask.makeName(fileName)
+      if not @build.hasTask?(mocTaskName) then
+        mocTask = MocTask.new(fileName, @build, @mocTaskConfigName)
+        @build.addTask(mocTaskName, mocTask)
+      end
+      mocTask = @build.getTask(mocTaskName)
+      tasks = Array.new
+      tasks.push(mocTask)
+      compileTaskName = CompileTask.makeName(mocTask.mocFileName)
+      if not @build.hasTask?(compileTaskName) then
+        compileTask = CompileTask.new(mocTask.mocFileName, @build, @compileTaskConfigName)
+        @build.addTask(compileTaskName, compileTask)
+      end
+      tasks.push(@build.getTask(compileTaskName))
+      return tasks
+    end
+
+  end
+
+
+
+
+
+
+
+  
+  # can be called with an array of file names or a single file name
+  def Makr.applyGenerators(fileCollection, generatorArray)
+    # first check, if we only have a single file
+    fileCollection = [Makr.cleanPathName(fileCollection)] if fileCollection.kind_of? String
+    tasks = Array.new
+    fileCollection.each do |fileName|
+      generatorArray.each do |gen|
+        genTasks = gen.generate(fileName)
+        tasks.concat(genTasks) if genTasks
+      end
+    end
+    return tasks
+  end
+
+
+
+
+
+
+
+
+
+
+  
+  def Makr.makeProgram(progName, build, taskCollection, programConfig = nil)
+    Makr.cleanPathName(progName)
+    programTaskName = ProgramTask.makeName(progName)
+    if not build.hasTask?(programTaskName) then
+      build.addTask(programTaskName, ProgramTask.new(progName, build, programConfig))
+    end
+    progTask = build.getTask(programTaskName)
+    progTask.addDependencies(taskCollection)
+    build.defaultTask = progTask # set this as default task in build
+    return progTask
+  end
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
