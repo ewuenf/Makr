@@ -20,3 +20,4 @@ TODO:
 Beispiele aufsplitten oder alle Möglichkeiten in einem großem Beispiel-Makrfile (oder beides ;-) )
 Unterprojekte möglichst abgetrennt
 Named arguments umsetzen?
+wenn build abgebrochen wird, soll er dann per default trotzdem gesaved werden?

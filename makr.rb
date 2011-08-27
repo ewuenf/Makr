@@ -109,7 +109,9 @@ module Makr
 
     # Sleeps and blocks until the task queue is finished executing
     def join
-      sleep 0.01 until @queue.empty? && @executors.all?{|e| !e.active}
+      while (not (@queue.empty? and @executors.all?{|e| !e.active}))
+        sleep 0.01
+      end      
     end
 
   protected
@@ -140,7 +142,7 @@ module Makr
 
   # logging 
   @log = Logger.new(STDOUT)
-  def self.log()
+  def Makr.log()
     @log
   end
 
@@ -148,10 +150,10 @@ module Makr
 
 
 
-  # FIXME build abort should work from wherever
-  def self.abortBuild()
+  def Makr.abortBuild()
     Makr.log.fatal("Aborting build process.")
-    Kernel.exit! 1  # does this work ???
+    UpdateTraverser.abortUpdate = true # cooperative abort
+    # Kernel.exit! 1  did not work as expected
   end
 
 
@@ -536,7 +538,7 @@ module Makr
       if (not File.file?(@fileName)) then
         if @missingFileIsError then
           Makr.log.fatal("file " + @fileName + "  is unexpectedly missing!\n\n")
-          Makr.abortBuild
+          Makr.abortBuild()
         end
         Makr.log.info("FileTask " + @fileName + " is missing, so update() is true.")
         return true
@@ -672,6 +674,13 @@ module Makr
     end
 
 
+    # we strive to make a unique name even if source files with identical names exist by
+    # taking the whole path and replacing directory seperators with underscores
+    def makeObjectFileName(fileName)
+      @build.buildPath + "/" + fileName.gsub('/', '_').gsub('.', '_') + ".o"
+    end
+
+
     # the path of the input and output file of the compilation
     attr_reader :fileName, :objectFileName
 
@@ -686,8 +695,16 @@ module Makr
       @build = build
       @configName = configName
 
+      # first add a dependency on the file itself
+      if not @build.hasTask?(@fileName) then
+        @compileFileDep = FileTask.new(@fileName)
+        @build.addTask(@fileName, @compileFileDep)
+      else
+        @compileFileDep = @build.getTask(@fileName)
+      end
+
       # we just keep it simple for now and add a ".o" to the given fileName, as we cannot safely replace a suffix
-      @objectFileName = @build.buildPath + "/" + File.basename(@fileName) + ".o"
+      @objectFileName = makeObjectFileName(fileName)
       # now add a dependency task on the target object file
       if not @build.hasTask?(@objectFileName) then
         @compileTarget = FileTask.new(@objectFileName, false)
@@ -736,7 +753,7 @@ module Makr
         end
         if depLine.include?(':') # the "xyz.o"-target specified by the compiler in the "Makefile"-rule needs to be skipped
           splitArr = depLine.split(": ")
-          dependencyFiles.concat(splitArr[1].split(" "))
+          dependencyFiles.concat(splitArr[1].split(" ")) if splitArr[1]
         else
           dependencyFiles.concat(depLine.split(" "))
         end
@@ -744,6 +761,7 @@ module Makr
       dependencyFiles.each do |depFile|
         depFile.strip!
         next if depFile.empty?
+        next if (depFile == @fileName)
         if @build.hasTask?(depFile) then
           task = @build.getTask(depFile)
           if not @dependencies.include?(task)
@@ -755,6 +773,8 @@ module Makr
           addDependency(task) # dependencies cannot contain task if everything is coded right
         end
       end
+      # also we want the dependency on the file to be compiled itself
+      addDependency(@compileFileDep)
       # need to do this or the compile task dep will be lost each time we build them deps here
       addDependency(@compileTarget)
       # we need to add the config task again!
@@ -775,7 +795,7 @@ module Makr
       successful = system(compileCommand)
       if not successful then
         Makr.log.fatal("compile error, exiting build process\n\n\n")
-        abortBuild()
+        Makr.abortBuild()
       end
       @compileTarget.update() # we call this to update file information on the compiled target
       return true # right now, we are always true (we could check for target equivalence or something else
@@ -904,7 +924,7 @@ module Makr
       successful = system(mocCommand)
       if not successful then
         Makr.log.fatal("moc error, exiting build process\n\n\n")
-        abortBuild()
+        Makr.abortBuild()
       end
       @mocTarget.update() # we call this to update file information on the compiled target
       return true # right now, we are always true (we could check for target equivalence or something else
@@ -1047,7 +1067,7 @@ module Makr
       successful = system(linkCommand)
       if not successful then
         Makr.log.fatal("linker error, exiting build process\n\n\n")
-        abortBuild()
+        Makr.abortBuild()
       end
       @compileTarget.update() # we call this to update file information on the compiled target
       return true # we could check here for target change like proposed in CompileTask.update
@@ -1378,7 +1398,13 @@ module Makr
 
   class UpdateTraverser
 
-
+    @@abortUpdate = false
+    def UpdateTraverser.abortUpdate
+      @@abortUpdate
+    end
+    def UpdateTraverser.abortUpdate=(arg)
+      @@abortUpdate = arg
+    end
 
     
     class Updater
@@ -1394,6 +1420,7 @@ module Makr
       # might not be updated, as the argument callUpdate is false, but the algorithm logic
       # still needs to handle dependant tasks for the above reason.
       def run(callUpdate)
+        return if UpdateTraverser.abortUpdate # cooperatively abort build
         if SignalHandler.sigUsr1Called then  # if the user sent a signal to this process, then we just exit all
           puts "returning on signal usr1"
           return                          # runnables that start without spawning new ones (which happens below)
@@ -1406,6 +1433,7 @@ module Makr
           if callUpdate then
             retVal = @task.update()
           end
+          return if UpdateTraverser.abortUpdate # cooperatively abort build
           @task.updateMark = false
           @task.dependantTasks.each do |dependantTask|
             dependantTask.mutex.synchronize do
@@ -1689,7 +1717,7 @@ module Makr
   def Makr.popArgs()
     if (ScriptArgumentsStorage.get.size < 2) then
       Makr.log.fatal "Tried to remove the minimum arguments from stack, exiting!"
-      abortBuild()
+      Makr.abortBuild()
     end
     ScriptArgumentsStorage.get.pop
   end
