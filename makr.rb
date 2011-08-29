@@ -1011,6 +1011,9 @@ module Makr
         if config["linker.libPaths"] then
           callString += config["linker.libPaths"] + " "
         end
+
+        linker.libs debuggen!
+        
         if config["linker.libs"] then
           callString += config["linker.libs"] + " "
         end
