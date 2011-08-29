@@ -358,7 +358,7 @@ module Makr
     
     
     def PkgConfig.addLibs(config, pkgName, static = false)
-      command = "pkg-config --libs " + ((static)?" --static ":"") + pkgName
+      command = "pkg-config --libs " + ((static)? " --static ":"") + pkgName
       config.addUnique("linker.lFlags", " " + (`#{command}`).strip!)
     end
 
@@ -952,7 +952,7 @@ module Makr
 
   
   class DynamicLibTask < Task
-    # special dynamic lib thingies
+    # special dynamic lib thingies (see http://www.faqs.org/docs/Linux-HOWTO/Program-Library-HOWTO.html)
     def initialize(libName)
       raise "[makr] Not implemented yet"
     end
@@ -967,7 +967,7 @@ module Makr
 
   
   class StaticLibTask < Task
-    # special static lib thingies
+    # special static lib thingies (see http://www.faqs.org/docs/Linux-HOWTO/Program-Library-HOWTO.html)
     def initialize(libName)
       raise "[makr] Not implemented yet"
     end
