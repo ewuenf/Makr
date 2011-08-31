@@ -21,3 +21,4 @@ Beispiele aufsplitten oder alle Möglichkeiten in einem großem Beispiel-Makrfil
 Unterprojekte möglichst abgetrennt
 Named arguments umsetzen?
 wenn build abgebrochen wird, soll er dann per default trotzdem gesaved werden?
+block-idiom (wie bei File.open) einsetzen, um build zu speichern bei exceptions etc?

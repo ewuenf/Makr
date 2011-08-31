@@ -203,7 +203,12 @@ module Makr
       @parent = nil
     end
 
+    
+    def clear()
+      @hash.clear()
+    end
 
+    
     def copyParent(key = nil)
       return if not @parent
       if key then
@@ -587,7 +592,7 @@ module Makr
     end
 
     
-    def initalize(name)
+    def initialize(name)
       super
       @storedConfigString = String.new
     end
@@ -1011,9 +1016,6 @@ module Makr
         if config["linker.libPaths"] then
           callString += config["linker.libPaths"] + " "
         end
-
-        linker.libs debuggen!
-        
         if config["linker.libs"] then
           callString += config["linker.libs"] + " "
         end
@@ -1100,28 +1102,18 @@ module Makr
     # build path should be absolute and is read-only once set in this "ctor"
     def initialize(buildPath) 
       @buildPath = Makr.cleanPathName(buildPath)
-      @buildPathMakrDir = @buildPath + "/.makr"
-      @buildPath.freeze # set vars readonly
-      @buildPathMakrDir.freeze
-      # if build dir and subdirs does not exist, create it
-      raise "[makr] given build dir is not a dir!" if (not File.directory?(@buildPath)) and File.exist?(@buildPath)
-      Dir.mkdir(@buildPath) if not File.directory?(@buildPath)
-      raise "[makr] \".makr\" subdir in builddir is not a dir!" \
-        if (not File.directory?(@buildPathMakrDir)) and File.exist?(@buildPathMakrDir)
-      Dir.mkdir(@buildPathMakrDir) if not File.directory?(@buildPathMakrDir)
+      @buildPath.freeze
 
       @postUpdates = Array.new
 
       # task hash
       @taskHash      = Hash.new            # maps task names to tasks (names are for example full path file names)
       @taskHashCache = Hash.new            # a cache for the task hash that is loaded below
-      @taskHashCacheFile  = @buildPathMakrDir + "/taskHashCache.ruby_marshal_dump"  # where the task hash cache is stored to
-      loadTaskHashCache()
 
       # configs
       @configs = Hash.new
-      @configsFile  = @buildPathMakrDir + "/config.txt"
-      loadConfigs()  # loads configs from build dir and assign em to tasks
+      @configsFileName = @buildPath + "/.makr/config.txt"
+      @configsFileName.freeze
 
       @defaultTask = nil
       @nrOfThreads = nil
@@ -1163,6 +1155,7 @@ module Makr
       @postUpdates.each do |task|
         task.postUpdate()
       end
+      @postUpdates.clear() # afterwards, we clear the array
     end
     
 
@@ -1197,11 +1190,6 @@ module Makr
     end
 
 
-    def clearConfigs()
-      @configs.clear()
-    end
-
-    
     def hasConfig?(name)
       return @configs.has_key?(name)
     end
@@ -1240,76 +1228,13 @@ module Makr
     end
 
 
-    def save(cleanupConfigs = true)
-      dumpTaskHash()
-      dumpConfigs(cleanupConfigs)
-    end
-
-
-  protected
-
-    def addTaskPrivate(taskName, task)
-      if @taskHash.has_key? taskName then
-        Makr.log.warn("Build::addTaskPrivate, taskName exists already!: " + taskName)
-        return
-      end
-      @taskHash[taskName] = task   # we dont bother about cache here, as cache is overwritten on save to disk
-      # if a task is added all its dependencies are also added automatically, if it has em'
-      addArr = task.dependencies.clone
-      while not addArr.empty? do
-        curTask = addArr.delete_at(0)
-        if not @taskHash.has_key? curTask.name then
-          @taskHash[curTask.name] = curTask
-        end
-        addArr.concat(curTask.dependencies.clone)
-      end
-    end
+    # dump helper functions
 
     
-    def dumpTaskHash()
-      # dump the hash (and not the cache!, this way we get cleaned cache next time)
-      File.open(@taskHashCacheFile, "wb") do |dumpFile|
-        Marshal.dump(@taskHash, dumpFile)
-      end
-    end
-
-
-    def loadTaskHashCache()
-      Makr.log.info("trying to read task hash cache from " + @taskHashCacheFile)
-      if File.file?(@taskHashCacheFile) then
-        Makr.log.info("found task hash cache file, now restoring")
-        File.open(@taskHashCacheFile, "rb") do |dumpFile|
-          @taskHashCache = Marshal.load(dumpFile)
-        end
-      else
-        Makr.log.info("could not find or open taskHash file, tasks will be setup new!")
-      end
-      cleanTaskHashCache()
-    end
-    
-
-    def cleanTaskHashCache()
-      # remove tasks that want to be deleted and their
-      deleteArr = Array.new
-      @taskHashCache.each do |key, value|
-        if value.mustBeDeleted? then
-          deleteArr.push(value)
-        end
-      end
-      Makr.log.debug("cleanTaskHashCache(), number of tasks to be cleansed: " + deleteArr.size.to_s)
-      while not deleteArr.empty? do
-        task = deleteArr.delete_at(0)
-        @taskHashCache.delete(task.name)
-        deleteArr.concat(task.dependantTasks)
-        task.cleanupBeforeDeletion()
-      end
-    end
-
-
     def loadConfigs()  # loads configs from build dir
-      if File.file?(@configsFile) then
+      if File.file?(@configsFileName) then
         Makr.log.info("found config file, now restoring")
-        lines = IO.readlines(@configsFile)
+        lines = IO.readlines(@configsFileName)
         lineIndex = 0
         while lineIndex < lines.size() do
           if (not (lines[lineIndex])) or (lines[lineIndex] == "") then
@@ -1345,6 +1270,69 @@ module Makr
       end
     end
 
+
+    def dumpConfigs(cleanupConfigs)
+      if cleanupConfigs then
+        cleanConfigs()
+      end
+      File.open(@configsFileName, "w") do |dumpFile|
+        @configs.each do |key, value|
+          value.output(dumpFile)
+        end
+      end
+    end
+
+
+    def cleanTaskHashCache()
+      # remove tasks that want to be deleted and their
+      deleteArr = Array.new
+      @taskHashCache.each do |key, value|
+        if value.mustBeDeleted? then
+          deleteArr.push(value)
+        end
+      end
+      Makr.log.debug("cleanTaskHashCache(), number of tasks to be cleansed: " + deleteArr.size.to_s)
+      while not deleteArr.empty? do
+        task = deleteArr.delete_at(0)
+        @taskHashCache.delete(task.name)
+        deleteArr.concat(task.dependantTasks)
+        task.cleanupBeforeDeletion()
+      end
+    end
+  
+
+    def prepareDump()
+      @taskHashCache.replace(@taskHash)
+      @taskHash.clear()
+    end
+
+
+    def unprepareDump()
+      @taskHash.replace(@taskHashCache)
+      @taskHashCache.clear()
+    end
+
+
+  protected
+
+  
+    def addTaskPrivate(taskName, task)
+      if @taskHash.has_key? taskName then
+        Makr.log.warn("Build::addTaskPrivate, taskName exists already!: " + taskName)
+        return
+      end
+      @taskHash[taskName] = task   # we dont bother about cache here, as cache is overwritten on save to disk
+      # if a task is added all its dependencies are also added automatically, if it has em'
+      addArr = task.dependencies.clone
+      while not addArr.empty? do
+        curTask = addArr.delete_at(0)
+        if not @taskHash.has_key? curTask.name then
+          @taskHash[curTask.name] = curTask
+        end
+        addArr.concat(curTask.dependencies.clone)
+      end
+    end
+
     
     def cleanConfigs()
       saveHash = Hash.new
@@ -1374,26 +1362,46 @@ module Makr
       end
     end
 
-    
-    def dumpConfigs(cleanupConfigs)
-      if cleanupConfigs then
-        cleanConfigs()
-      end
-      File.open(@configsFile, "w") do |dumpFile|
-        @configs.each do |key, value|
-          value.output(dumpFile)
-        end
-      end
-    end
-
-    
   end
 
 
 
+  def Makr.loadBuild(buildPath)
+    buildPath = Makr.cleanPathName(buildPath)
+    buildPathMakrDir = buildPath + "/.makr"
+    # if build dir and subdirs does not exist, create it
+    raise "[makr] given build dir is not a dir!" if (not File.directory?(buildPath)) and File.exist?(buildPath)
+    Dir.mkdir(buildPath) if not File.directory?(buildPath)
+    raise "[makr] \"" + buildPath + "/.makr\" is not a dir!" \
+      if (not File.directory?(buildPathMakrDir)) and File.exist?(buildPathMakrDir)
+    Dir.mkdir(buildPathMakrDir) if not File.directory?(buildPathMakrDir)
 
+    buildPathBuildDumpFileName = buildPathMakrDir + "/build.ruby_marshal_dump"
 
+    if not File.file?(buildPathBuildDumpFileName) then
+      Makr.log.warn("could not find or open build dump file, build will be setup new!")
+      return Build.new(buildPath) 
+    end
+    Makr.log.info("found build dump file, now restoring")
+    File.open(buildPathBuildDumpFileName, "rb") do |dumpFile|
+      build = Marshal.load(dumpFile)
+      build.loadConfigs()
+      build.cleanTaskHashCache()
+      return build
+    end
+  end
 
+  
+
+  def Makr.saveBuild(build, cleanupConfigs = true)
+    build.dumpConfigs(cleanupConfigs)
+    build.prepareDump()
+    saveFileName = build.buildPath + "/.makr/build.ruby_marshal_dump"
+    File.open(saveFileName, "wb") do |dumpFile|
+      Marshal.dump(build, dumpFile)
+    end
+    build.unprepareDump()
+  end
 
 
 
