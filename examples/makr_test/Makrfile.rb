@@ -10,11 +10,16 @@ def configure(build)
   compilerConfig = build.makeNewConfig("CompileTask")
   compilerConfig.clear()
   compilerConfig["compiler"] = "g++"
-  compilerConfig["compiler.includePaths"] = " -I" + $localDir + "/src"
+  compilerConfig["compiler.includePaths"] = " -I" + $localDir + "/src" + " -I/usr/lib/qt3/include"
   compilerConfig["linker"] = "g++"
-  compilerConfig["linker.libs"] = " -lX11 "
+  compilerConfig["linker.libs"] = " -lX11 -lqt-mt"
+  compilerConfig["linker.libPaths"] = "-L/usr/lib/qt3/lib64"
   Makr::PkgConfig.addCFlags(compilerConfig, "libpng")
   Makr::PkgConfig.addLibs(compilerConfig, "libpng")
+
+  mocConfig = build.makeNewConfig("MocTask")
+  mocConfig.clear()
+  mocConfig["moc"] = "/usr/lib/qt3/bin/moc"
 end
 
 
@@ -25,10 +30,11 @@ else
   build = Makr.loadBuild(Makr.cleanPathName($buildDir))
   configure(build) #if $build.configs.empty?
 
-  allFiles = Makr::FileCollector.collect($localDir + "/src/", "*.{cpp,cxx}", true)
-  #allFiles = Makr::FileCollector.collectExclude(localDir + "/src/", "*", "*.h", true)
-  tasks = Makr.applyGenerators(allFiles, [Makr::CompileTaskGenerator.new(build, "CompileTask")])
-  #tasks.concat(Makr.applyGenerators(localDir + "/src/myfile.txtcpp", [Makr::CompileTaskGenerator.new(build, "CompileTask")]) # single file usage
+  allCPPFiles = Makr::FileCollector.collect($localDir + "/src/", "*.{cpp,cxx}", true)
+  tasks = Makr.applyGenerators(allCPPFiles, [Makr::CompileTaskGenerator.new(build, "CompileTask")])
+  allHeaderFiles = Makr::FileCollector.collect($localDir + "/src/", "*.{h}", true)
+  tasks.concat(Makr.applyGenerators(allHeaderFiles, [Makr::MocTaskGenerator.new(build, "CompileTask", "MocTask")]))
+
   myProgramTask = Makr.makeProgram($buildDir + "/myProgram", build, tasks, "CompileTask")
 
 

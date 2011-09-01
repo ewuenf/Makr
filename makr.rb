@@ -691,7 +691,7 @@ module Makr
 
 
     # build contains the global configuration, see Build.globalConfig and class Config
-    def initialize(fileName, build, configName)
+    def initialize(fileName, build, configName, fileIsGenerated = false, generatorTask = nil)
       @fileName = Makr.cleanPathName(fileName)
       # now we need a unique name for this task. As we're defining a FileTask as dependency to fileName
       # and a FileTask on the @objectFileName to ensure a build of the target if it was deleted or
@@ -700,12 +700,16 @@ module Makr
       @build = build
       @configName = configName
 
-      # first add a dependency on the file itself
-      if not @build.hasTask?(@fileName) then
-        @compileFileDep = FileTask.new(@fileName)
-        @build.addTask(@fileName, @compileFileDep)
-      else
-        @compileFileDep = @build.getTask(@fileName)
+      # first add a dependency on the file itself, if it isnt generated
+      @fileIsGenerated = fileIsGenerated
+      @generatorTask = generatorTask
+      if not @fileIsGenerated then
+        if not @build.hasTask?(@fileName) then
+          @compileFileDep = FileTask.new(@fileName)
+          @build.addTask(@fileName, @compileFileDep)
+        else
+          @compileFileDep = @build.getTask(@fileName)
+        end
       end
 
       # we just keep it simple for now and add a ".o" to the given fileName, as we cannot safely replace a suffix
@@ -735,6 +739,10 @@ module Makr
 
 
     def getDepsStringArrayFromCompiler()
+      # always clear input lines upon call
+      @dependencyLines = Array.new
+      # then check, if we need to to
+      return if @fileIsGenerated and (not File.file?(@fileName))
       # we use the compiler for now, but maybe fastdep is worth a look / an adaption
       # system headers are excluded using compiler option "-MM", else "-M"
       depCommand = makeCompilerCallString() + ((@@checkOnlyUserHeaders)?" -MM ":" -M ") + @fileName
@@ -779,11 +787,13 @@ module Makr
         end
       end
       # also we want the dependency on the file to be compiled itself
-      addDependency(@compileFileDep)
+      addDependency(@compileFileDep) if not @fileIsGenerated
       # need to do this or the compile task dep will be lost each time we build them deps here
       addDependency(@compileTarget)
       # we need to add the config task again!
       addDependency(@configTask)
+      
+      addDependency(@generatorTask) if @fileIsGenerated
     end
 
 
@@ -832,6 +842,9 @@ module Makr
   # Represents a task related to the moc-preprozessor from the qt-library.
   class MocTask < Task
 
+there still is some error in moc task as it gets rebuild each and every time
+
+    
 
     def MocTask.containsQ_OBJECTMacro?(fileName)
       IO.readlines(fileName).each do |line|
@@ -847,7 +860,8 @@ module Makr
         Makr.log.debug("moc config name is: \"" + @configName + "\"")
         config = @build.getConfig(@configName)
         if (not config["moc"]) then
-          Makr.log.warn("no moc binary given")
+          Makr.log.warn("no moc binary given, using moc in path")
+          callString = "moc "
         else
           callString = config["moc"] + " "
         end
@@ -881,7 +895,7 @@ module Makr
         prefix = config["moc.filePrefix"] if (config["moc.filePrefix"])
         suffix = config["moc.fileSuffix"] if (config["moc.fileSuffix"])
       end
-      build.buildPath + "/" + prefix + File.basename(@fileName) + suffix
+      build.buildPath + "/" + prefix + File.basename(fileName) + suffix
     end
 
 
@@ -924,7 +938,7 @@ module Makr
     
     def update()
       # construct compiler command and execute it
-      mocCommand = makeMocCallString() + " -o " + @mocFileName + @fileName
+      mocCommand = makeMocCallString() + " -o " + @mocFileName + " " + @fileName
       Makr.log.info("Executing moc in MocTask: \"" + @name + "\"\n\t" + mocCommand)
       successful = system(mocCommand)
       if not successful then
@@ -1611,7 +1625,7 @@ module Makr
       # first check, if file has Q_OBJECT, otherwise we return no tasks
       return nil if not MocTask.containsQ_OBJECTMacro?(fileName)
 
-      # Q_OBJECT contained, no go on
+      # Q_OBJECT contained, now go on
       Makr.cleanPathName(fileName)
       mocTaskName = MocTask.makeName(fileName)
       if not @build.hasTask?(mocTaskName) then
@@ -1623,10 +1637,11 @@ module Makr
       tasks.push(mocTask)
       compileTaskName = CompileTask.makeName(mocTask.mocFileName)
       if not @build.hasTask?(compileTaskName) then
-        compileTask = CompileTask.new(mocTask.mocFileName, @build, @compileTaskConfigName)
+        compileTask = CompileTask.new(mocTask.mocFileName, @build, @compileTaskConfigName, true, mocTask)
         @build.addTask(compileTaskName, compileTask)
       end
-      tasks.push(@build.getTask(compileTaskName))
+      compileTask = @build.getTask(compileTaskName)
+      tasks.push(compileTask)
       return tasks
     end
 
@@ -1647,6 +1662,9 @@ module Makr
     fileCollection.each do |fileName|
       generatorArray.each do |gen|
         genTasks = gen.generate(fileName)
+        if genTasks and genTasks.size() == 2 then
+          yo = 2394
+        end
         tasks.concat(genTasks) if genTasks
       end
     end
