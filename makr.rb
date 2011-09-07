@@ -792,7 +792,7 @@ module Makr
       addDependency(@compileTarget)
       # we need to add the config task again!
       addDependency(@configTask)
-      
+
       addDependency(@generatorTask) if @fileIsGenerated
     end
 
@@ -838,13 +838,8 @@ module Makr
 
 
 
-  
   # Represents a task related to the moc-preprozessor from the qt-library.
   class MocTask < Task
-
-there still is some error in moc task as it gets rebuild each and every time
-
-    
 
     def MocTask.containsQ_OBJECTMacro?(fileName)
       IO.readlines(fileName).each do |line|
@@ -935,7 +930,7 @@ there still is some error in moc task as it gets rebuild each and every time
       Makr.log.debug("made MocTask with @name=\"" + @name + "\"")
     end
 
-    
+
     def update()
       # construct compiler command and execute it
       mocCommand = makeMocCallString() + " -o " + @mocFileName + " " + @fileName
@@ -952,7 +947,7 @@ there still is some error in moc task as it gets rebuild each and every time
 
 
     def mustBeDeleted?()
-      return MocTask.containsQ_OBJECTMacro?(@fileName)
+      return (not MocTask.containsQ_OBJECTMacro?(@fileName))
     end
 
 
