@@ -1254,10 +1254,10 @@ module Makr
           parsingGood, lineIndex, parentName = config.input(lines, lineIndex)
           if parsingGood then
             lineIndex += 1 # go on to next line
-            # check name for existence first
+            # check name for existence first (this is not an error)
             if @configs.has_key?(config.name) then
-              Makr.log.error("name duplication in config file before lineIndex: " + lineIndex.to_s)
-              return
+              Makr.log.error("already having config parsed before line " + lineIndex.to_s)
+              next
             end
             if parentName then
               if not @configs.has_key?(parentName) then
