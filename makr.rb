@@ -961,16 +961,149 @@ module Makr
 
 
 
-  
+
+
 
 
   
+
+
+  # creating a dynamic lib requires compiling the object files with -fPIC flag!!!!!!!!!!!!! #############
   class DynamicLibTask < Task
+
     # special dynamic lib thingies (see http://www.faqs.org/docs/Linux-HOWTO/Program-Library-HOWTO.html)
-    def initialize(libName)
-      raise "[makr] Not implemented yet"
+
+
+    attr_reader    :libName  # basename of the lib to be build
+    attr_reader    :libPath  # full path of the lib to be build (but not necessarily absolute path, depends on user)
+
+
+    # make a unique name
+    def DynamicLibTask.makeName(libName)
+       "DynamicLibTask__" + libName
+    end
+
+
+    def makeLinkerCallString() # g++ is always default value
+      if @configName then
+        Makr.log.debug("config name is: \"" + @configName + "\"")
+        config = @build.getConfig(@configName)
+        callString = String.new
+        if (not config["linker"]) then
+          Makr.log.warn("no linker command given, using default g++")
+          callString = "g++ "
+        else
+          callString = config["linker"] + " "
+        end
+        # now add other flags and options
+        if config["linker.lFlags"] then
+          callString += config["linker.lFlags"] + " "
+        end
+        if config["linker.libPaths"] then
+          callString += config["linker.libPaths"] + " "
+        end
+        if config["linker.libs"] then
+          callString += config["linker.libs"] + " "
+        end
+        if config["linker.otherOptions"] then
+          callString += config["linker.otherOptions"] + " "
+        end
+        # add mandatory "-shared" etc if necessary
+        callString += " -shared " if not callString.include?("-shared")
+        callString += (" -Wl,-soname," + @libName) if not callString.include?("-soname")
+        return callString
+      else
+        Makr.log.warn("no config given, using bare linker g++")
+        return "g++ -shared -Wl,-soname," + @libName
+      end
+    end
+
+    alias :getConfigString :makeLinkerCallString
+
+
+    # libPath should be the complete path (absolute or relative) of the library with all standard fuss, like "libxy.so.1.2.3"
+    # (if you want a different soname for the lib, pass it as option with the config identified by configName)
+    def initialize(libPath, build, configName)
+      @libPath = Makr.cleanPathName(libPath)
+      @libName = File.basename(@libPath)
+      super(DynamicLibTask.makeName(@libPath))
+      @build = build
+      @configName = configName
+
+      if not @build.hasTask?(@libPath) then
+        @targetFileTask = FileTask.new(@libPath, false)
+        @build.addTask(@libPath, @targetFileTask)
+      else
+        @targetFileTask = @build.getTask(@libPath)
+      end
+      addDependency(@targetFileTask)
+      # now add another dependency task on the config
+      @configTaskName = ConfigTask.makeName(@libPath)
+      if not @build.hasTask?(@configTaskName) then
+        @configTask = ConfigTask.new(@configTaskName)
+        @build.addTask(@configTaskName, @configTask)
+      else
+        @configTask = @build.getTask(@configTaskName)
+      end
+      addDependency(@configTask)
+
+      Makr.log.debug("made DynamicLibTask with @name=\"" + @name + "\"")
+    end
+
+
+    def update()
+      # build compiler command and execute it
+      linkCommand = makeLinkerCallString() + " -o " + @libPath
+      @dependencies.each do |dep|
+        # we only want dependencies that provide an object file
+        if dep.instance_variable_defined?("@objectFileName") then
+          linkCommand += " " + dep.objectFileName
+        end
+      end
+      Makr.log.info("Building DynamicLibTask \"" + @name + "\"\n\t" + linkCommand)
+      successful = system(linkCommand)
+      if not successful then
+        Makr.log.fatal("linker error, exiting build process\n\n\n")
+        Makr.abortBuild()
+      end
+      @targetFileTask.update() # we call this to update file information on the compiled target
+      return true # we could check here for target change like proposed in CompileTask.update
+    end
+
+
+    def cleanupBeforeDeletion()
+      system("rm -f " + @libPath)
     end
   end
+
+
+
+
+
+  
+  def Makr.makeDynamicLib(libName, build, taskCollection, libConfig = nil)
+    Makr.cleanPathName(libName)
+    libTaskName = DynamicLibTask.makeName(libName)
+    if not build.hasTask?(libTaskName) then
+      build.addTask(libTaskName, DynamicLibTask.new(libName, build, libConfig))
+    end
+    libTask = build.getTask(libTaskName)
+    libTask.addDependencies(taskCollection)
+    build.defaultTask = libTask # set this as default task in build
+    return libTask
+  end
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -982,10 +1115,117 @@ module Makr
   
   class StaticLibTask < Task
     # special static lib thingies (see http://www.faqs.org/docs/Linux-HOWTO/Program-Library-HOWTO.html)
-    def initialize(libName)
-      raise "[makr] Not implemented yet"
+    # ar rcs my_library.a file1.o file2.o
+
+    attr_reader    :libName  # basename of the lib to be build
+    attr_reader    :libPath  # full path of the lib to be build (but not necessarily absolute path, depends on user)
+
+
+    # make a unique name
+    def StaticLibTask.makeName(libName)
+       "StaticLibTask__" + libName
+    end
+
+
+    def makeLinkerCallString() # g++ is always default value
+      if @configName then
+        Makr.log.debug("config name is: \"" + @configName + "\"")
+        config = @build.getConfig(@configName)
+        callString = String.new
+        if (not config["linker"]) then
+          Makr.log.warn("no linker command given, using default ar")
+          callString = "ar rcs "
+        else
+          callString = config["linker"] + " "
+        end
+        return callString
+      else
+        Makr.log.warn("no config given, using bare linker ar")
+        return "ar rcs "
+      end
+    end
+
+    alias :getConfigString :makeLinkerCallString
+
+
+    # libPath should be the complete path (absolute or relative) of the library with all standard fuss, like "libxy.a"
+    def initialize(libPath, build, configName)
+      @libPath = Makr.cleanPathName(libPath)
+      @libName = File.basename(@libPath)
+      super(DynamicLibTask.makeName(@libPath))
+      @build = build
+      @configName = configName
+
+      if not @build.hasTask?(@libPath) then
+        @targetFileTask = FileTask.new(@libPath, false)
+        @build.addTask(@libPath, @targetFileTask)
+      else
+        @targetFileTask = @build.getTask(@libPath)
+      end
+      addDependency(@targetFileTask)
+      # now add another dependency task on the config
+      @configTaskName = ConfigTask.makeName(@libPath)
+      if not @build.hasTask?(@configTaskName) then
+        @configTask = ConfigTask.new(@configTaskName)
+        @build.addTask(@configTaskName, @configTask)
+      else
+        @configTask = @build.getTask(@configTaskName)
+      end
+      addDependency(@configTask)
+
+      Makr.log.debug("made StaticLibTask with @name=\"" + @name + "\"")
+    end
+
+
+    def update()
+      # build compiler command and execute it
+      linkCommand = makeLinkerCallString() + @libPath
+      @dependencies.each do |dep|
+        # we only want dependencies that provide an object file
+        if dep.instance_variable_defined?("@objectFileName") then
+          linkCommand += " " + dep.objectFileName
+        end
+      end
+      Makr.log.info("Building StaticLibTask \"" + @name + "\"\n\t" + linkCommand)
+      successful = system(linkCommand)
+      if not successful then
+        Makr.log.fatal("linker error, exiting build process\n\n\n")
+        Makr.abortBuild()
+      end
+      @targetFileTask.update() # we call this to update file information on the compiled target
+      return true # we could check here for target change like proposed in CompileTask.update
+    end
+
+
+    def cleanupBeforeDeletion()
+      system("rm -f " + @libPath)
     end
   end
+
+
+
+
+  
+
+
+  def Makr.makeStaticLib(libName, build, taskCollection, libConfig = nil)
+    Makr.cleanPathName(libName)
+    libTaskName = StaticLibTask.makeName(libName)
+    if not build.hasTask?(libTaskName) then
+      build.addTask(libTaskName, StaticLibTask.new(libName, build, libConfig))
+    end
+    libTask = build.getTask(libTaskName)
+    libTask.addDependencies(taskCollection)
+    build.defaultTask = libTask # set this as default task in build
+    return libTask
+  end
+
+
+
+
+
+
+
 
 
 
@@ -995,6 +1235,9 @@ module Makr
 
   
 
+
+
+  
   class ProgramTask < Task
 
     attr_reader    :programName  # identifies the binary to be build, wants full path as usual
@@ -1002,7 +1245,7 @@ module Makr
     
     # make a unique name for ProgramTasks out of the programName which is to be compiled
     # expects a Pathname or a String
-    def self.makeName(programName)
+    def ProgramTask.makeName(programName)
        "ProgramTask__" + programName
     end
 
@@ -1093,6 +1336,25 @@ module Makr
     end
     
   end
+
+
+
+
+  def Makr.makeProgram(progName, build, taskCollection, programConfig = nil)
+    Makr.cleanPathName(progName)
+    programTaskName = ProgramTask.makeName(progName)
+    if not build.hasTask?(programTaskName) then
+      build.addTask(programTaskName, ProgramTask.new(progName, build, programConfig))
+    end
+    progTask = build.getTask(programTaskName)
+    progTask.addDependencies(taskCollection)
+    build.defaultTask = progTask # set this as default task in build
+    return progTask
+  end
+
+
+
+
 
 
 
@@ -1676,36 +1938,11 @@ module Makr
 
 
   
-  def Makr.makeProgram(progName, build, taskCollection, programConfig = nil)
-    Makr.cleanPathName(progName)
-    programTaskName = ProgramTask.makeName(progName)
-    if not build.hasTask?(programTaskName) then
-      build.addTask(programTaskName, ProgramTask.new(progName, build, programConfig))
-    end
-    progTask = build.getTask(programTaskName)
-    progTask.addDependencies(taskCollection)
-    build.defaultTask = progTask # set this as default task in build
-    return progTask
-  end
 
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+  
 
 
 
