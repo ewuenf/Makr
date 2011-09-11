@@ -1703,10 +1703,7 @@ module Makr
       # still needs to handle dependant tasks for the above reason.
       def run(callUpdate)
         return if UpdateTraverser.abortUpdate # cooperatively abort build
-        if SignalHandler.sigUsr1Called then  # if the user sent a signal to this process, then we just exit all
-          puts "returning on signal usr1"
-          return                          # runnables that start without spawning new ones (which happens below)
-        end
+
         @task.mutex.synchronize do
           if not @task.updateMark then
             raise "[makr] Unexpectedly starting on a task that needs no update!"
@@ -1988,15 +1985,6 @@ module Makr
     ScriptArgumentsStorage.get.last
   end
 
-  
-  # just a convenience function, loads a Makrfile.rb from the given subDir and executes it
-  def Makr.makeSubDir(subDir)
-    makrFilePath = subDir + "/Makrfile.rb"
-    pushArgs(ScriptArguments.new(makrFilePath, getArgs().arguments))
-    Kernel.load(makrFilePath)
-    popArgs()
-  end
-
 
 
 
@@ -2005,20 +1993,24 @@ module Makr
 
 
   
-  
-  class SignalHandler
-    @@sigUsr1Called = false
-    def SignalHandler.sigUsr1Called
-      @@sigUsr1Called
-    end
-    def SignalHandler.sigUsr1Called=(arg)
-      @@sigUsr1Called = arg
+  # loads a Makrfile.rb from the given dir and executes it using Kernel.load and push/pops the current ScriptArguments, so that they are save
+  def Makr.makeDir(dir)
+    Makr.cleanPathName(dir)
+    makrFilePath = dir + "/Makrfile.rb"
+    if File.exist?(makrFilePath) then
+      Makr.pushArgs(Makr::ScriptArguments.new(makrFilePath, getArgs().arguments.clone))
+      Kernel.load(makrFilePath)
+      popArgs()
+    else
+      Makr.log.error("Subdir build call with " + makrFilePath + ", file not found!")
+      Makr.abortBuild()
     end
   end
 
 
 
-  
+
+
 
 
   
@@ -2041,20 +2033,19 @@ end     # end of module makr ###################################################
 # MAIN logic and interface with client code following
 
 ####################################################################################################################
+
+# first start logger and set level
 Makr.log.level = Logger::DEBUG
 Makr.log.formatter = proc { |severity, datetime, progname, msg|
     "[makr #{severity} #{datetime}]    #{msg}\n"
 }
-Makr.log << "\n\nmakr version 2011.08.26\n\n"  # just give short version notice on every startup (Date-encoded)
+Makr.log << "\n\nmakr version 2011.09.11\n\n"  # just give short version notice on every startup (Date-encoded)
 
-Signal.trap("USR1")  { Makr::SignalHandler.setSigUsr1 }
+# then set the signal handler to allow cooperative aborting of the build process
+Signal.trap("USR1")  { Makr::UpdateTraverser.abortUpdate = true }
 
-# now we load the Makrfile.rb and use Kernel.load on them to execute them as ruby scripts
-makrFilePath = "./Makrfile.rb"
-if File.exist?(makrFilePath) then
-  Makr.pushArgs(Makr::ScriptArguments.new(makrFilePath, ARGV))
-  Kernel.load(makrFilePath)
-else
-  Makr.log.error("No Makrfile.rb found!")  
-end
-
+# we need a basic ScriptArguments object pushed to stack (kind of dummy holding ARGV)
+# we use a relative path here to allow moving of build dir
+Makr.pushArgs(Makr::ScriptArguments.new("./Makrfile.rb", ARGV))
+# then we reuse the makeDir functionality building the current directory
+Makr.makeDir(".")
