@@ -6,7 +6,17 @@
 #
 # Documentation is sparse as source is short and readable and a number
 # of examples are/willbe provided.
-
+#
+#
+# Some remarks: In general, we want relative paths, so that development dirs can be moved without whoes. 
+#               The user may still prefer absolute paths (and use them), but the script tries to make no assumptions.
+#               We also make no assumptions on the command lines arguments given, the user is free to parse
+#               his own parameter set. The only thing this script does is loading the Makrfile.rb and providing
+#               the command line argument in the ScriptArguments stack. The name "Makrfile.rb" is hardcoded, but
+#               the user may be free to use this file to load some other file and execute it depending on the
+#               parameters given on the command line.
+#               During update, the task graph is not modified (only a convention, not enforced), so that programming
+#               the multithreaded update is much more simplified.
 
 
 require 'ftools'
@@ -149,7 +159,7 @@ module Makr
 
 
 
-
+  # central aborting method. TODO the concept does not seem final
   def Makr.abortBuild()
     Makr.log.fatal("Aborting build process.")
     UpdateTraverser.abortUpdate = true # cooperative abort
@@ -159,13 +169,13 @@ module Makr
 
 
 
-
+  # a helper function to clean a pathName fed into the function coming out with no slashes at the end
   def Makr.cleanPathName(pathName)
     if pathName.empty? then
       Makr.log.warn("Trying to clean empty pathName!")
       return pathName
     end
-    pathName.strip! # remove white space in front and at the end
+    # pathName.strip! # remove white space in front and at the end (could be problematic)
     pathName.chop! unless (pathName.rindex("/") != (pathName.size() - 1))  # remove slashes at the end
     return pathName
   end
@@ -174,14 +184,15 @@ module Makr
 
 
 
-  # Hierarchical configuration management. Asking for a key will walk up
+  # Hierarchical configuration management (Config instances have a parent) resembling a hash. Asking for a key will walk up
   # in hierarchy, until key is found or a new entry needs to be created in root config.
-  # Hierarchy is with single parent. Regarding construction and usage of configs see class Build.
-  # Keys could follow naming rules like "my.perfect.config.key"
+  # Hierarchy is with single parent. Regarding construction and usage of configs see class Build or examples.
+  # Keys could follow dot-seperated naming rules like "my.perfect.config.key". The hash is saved in a human-readable
+  # form in a file in the build directory (could even be edited by hand).
   class Config
 
     attr_reader   :name, :parent, :childs
-
+    
 
     def initialize(name, parent = nil) # parent is a config, too
       @name = name
@@ -209,6 +220,7 @@ module Makr
     end
 
     
+    # copies the complete parents (and parents parents) (and parents parents parents) keyz to this config or only the key given
     def copyParent(key = nil)
       return if not @parent
       if key then
@@ -222,14 +234,16 @@ module Makr
     end
 
 
+    # collects the complete key-value pairs of this Config and its parents into hash
     def collectHash(hash)
       # duplicate keyz are resolved in favor of the argument of the merge!-call, which is what we want here
       # (this way childs overwrite parents keys)
       hash.merge!(@parent.collectHash(hash))  if @parent
       hash.merge!(@hash)
     end
+    
 
-
+    # adds value to the keys value if it is not already included (useful for adding compiler options etc)
     def addUnique(key, value)
       curVal = @hash[key]
       if curVal then
@@ -240,12 +254,14 @@ module Makr
     end
 
 
+    # convenience mix function of copyParent and addUnique
     def copyAddUnique(key, value)
       copyParent(key)
       addUnique(key, value)
     end
 
 
+    # accessor function, like hash. See examples of Config usage
     def [](key)
       if @hash.has_key?(key) or not @parent then
         # we have the key and return it or we have no parent and return nil (the hash returns nil if it hasnt got the key)
@@ -258,6 +274,7 @@ module Makr
     end
 
 
+    # accessor function, like hash. See examples of Config usage
     def []=(key, value)
       # we always assign, regardless of the parent, which may have the same key, as the keys
       # in this class override the parents keys (see also [](key))
@@ -265,6 +282,7 @@ module Makr
     end
 
 
+    # serializes this Config (without parents values, but mentioning parent name) into a string
     def to_s
       stringio = StringIO.new
       output(stringio)
@@ -272,6 +290,7 @@ module Makr
     end
 
 
+    # serializes this Config (without parents values, but mentioning parent name) into the given io object
     def output(io)
       io << "  start " << @name << "\n"
       if @parent then
@@ -285,18 +304,18 @@ module Makr
     end
 
 
+    # parses the Config from an array of strings (lines) starting from line lineIndex
     # returns (Boolean,Integer,String) with the meaning:
     # (parsing went well, last line visited, parent name)
-    def input(lines, lineIndex)
+    def input(lines, lineIndex = 0)
       foundStart = false
       parentName = nil
       for i in (lineIndex..(lines.size() - 1)) do
-        line = lines[i]
-        # remove whitespace
-        line.strip!
-        #ignore newlines
-        next if line.empty?
-        # at first, we need to have a start marker
+        line = lines[i]      # get the current line from array,
+        line.strip!          # then remove any whitespace and
+        next if line.empty?  # ignore newlines
+        
+        # at first, we need to have a start marker (with the name of the Config)
         if not foundStart then
           if not line.index("start") then
             Makr.log.error("Config parse error at line nr " + i.to_s)
@@ -316,6 +335,7 @@ module Makr
         if line.index("end") == 0 then
           return true, i, parentName
         end
+        # if none of the above match, we have a normal line and parse the key-value-pair and add it to the hash
         splitArr = line.split("\"=\"")
         if splitArr.size < 2 then
           Makr.log.error("Parse error at line nr " + i.to_s)
@@ -329,7 +349,6 @@ module Makr
 
 
   protected # comparable to private in C++
-
 
     def addChild(config)
       @childs.push(config)
@@ -345,16 +364,11 @@ module Makr
 
 
 
-
-
-
-
-  
-  
   
   
 
-
+  # Convenience class related to Config adding compiler flags (Config key "compiler.cFlags") and
+  # options related to a lib using pkg-config.
   class PkgConfig
   
     def PkgConfig.addCFlags(config, pkgName)
@@ -387,17 +401,22 @@ module Makr
   
 
   # Basic class and concept representing a node in the dependency tree and any type of action that
-  # needs to be performed (such as a versioning system update or somefingelse). A possible configuration
+  # needs to be performed (such as a versioning system update or somethink else). A possible configuration
   # of the task is only referred to by name as I did not want linked data structures, that would be
   # saved all together upon marshalling in class build. Config class is different.
   class Task
-    
-    attr_reader :name, :dependencies, :dependantTasks
-    # these are used by the multi-threaded UpdateTraverser
-    attr_accessor :mutex, :updateMark, :dependenciesUpdatedCount, :dependencyWasUpdated, :configName
 
-    
-    def initialize(name) # name should be unique !
+    # dependencies are of course tasks this task depends on an additionally we have the array of
+    # dependantTask that depend on this task (double-linked graph structure)
+    attr_reader :name, :dependencies, :dependantTasks
+    # for reading and setting the Config name
+    attr_accessor :configName
+    # these are used by the multi-threaded UpdateTraverser
+    attr_accessor :mutex, :updateMark, :dependenciesUpdatedCount, :dependencyWasUpdated
+
+
+    # name must be unique within a build (see class Build)!
+    def initialize(name)
       @name = name
       @dependencies = Array.new
       @dependantTasks = Array.new
@@ -419,6 +438,7 @@ module Makr
     end
 
 
+    # convenience function for adding a plethora of tasks
     def addDependencies(otherTasks)
       otherTasks.each {|task| addDependency(task)}
     end
@@ -479,7 +499,8 @@ module Makr
       false
     end
 
-    
+
+    # kind of debugging to_s function
     def printDependencies(prefix)
       Makr.log.info(prefix + @name + " deps size: " + @dependencies.size.to_s)
       @dependencies.each do |dep|
@@ -503,7 +524,8 @@ module Makr
 
 
   
-  # Represents simple and basic dependencies on a files (could be input or output)
+  # Represents simple and basic dependencies on a files (could be input or output). set class variable FileTask.useFileHash to
+  # true (default is false) to check file change by md5-summing (is a costly operation)
   class FileTask < Task
 
     # this variable states, if file hashes should be used to identify changed files (which can be a costly operation)
@@ -516,17 +538,20 @@ module Makr
     end
 
 
-    attr_reader :fileName, :time, :size, :fileHash, :missingFileIsError # absolute path for fileName expected!
+    attr_reader :fileName, :time, :size, :fileHash, :missingFileIsError
 
+    
     # the boolean argument missingFileIsError can be used to indicate, if an update is necessary, if file is missing 
-    # (which is the "false" case) or if it is an error and the build should abort
+    # (which is the "false" case) or if it is an error and the build should abort. In other words: if missingFileIsError
+    # is false, a missing file just means that the update function will return true. This can be used for targets of
+    # the build process (see also class CompileTask for a usage example), to indicate a target that needs to be produced.
     def initialize(fileName, missingFileIsError = true)
       @fileName = Makr.cleanPathName(fileName)
-      Makr.log.debug("made file task with @fileName=\"" + @fileName + "\"")
       super(@fileName)
       # all file attribs stay uninitialized, so that first call to update returns true
       @time = @size = @fileHash = String.new
       @missingFileIsError = missingFileIsError
+      Makr.log.debug("made file task with @fileName=\"" + @fileName + "\"")
     end
 
     
@@ -535,7 +560,7 @@ module Makr
           Makr.log.info("mustBeDeleted?() is true for missing file: " + @fileName)
           return true
       end
-      false
+      return false
     end
 
     
@@ -620,15 +645,19 @@ module Makr
   
   
 
-  # Represents a compiled source that has dependencies to included files (and any deps that a user may specify).
+  # Represents a standard compiled source unit that has dependencies to included files (and any deps that a user may specify).
   # The input files are dependencies on FileTasks including the source itself. Another dependency exists on the
   # target object file, so that the task rebuilds, if that file was deleted or modified otherwise. Also the
   # task has a dependency on the Config object that contains the compiler options etc. so that a change in these
-  # also triggers recompilation (see also ConfigTask).
+  # also triggers recompilation (see also ConfigTask). The variable CompileTask.checkOnlyUserHeaders controls, wether
+  # dependency checking is extended to system header files or not (the former is more costly, default is not to do
+  # this).
   class CompileTask < Task
 
 
-    def makeCompilerCallString() # g++ is always default value
+    # builds up the string used for calling the compiler out of the given Config (or default values),
+    # the dependencies are not included (this is done in update)
+    def makeCompilerCallString() # g++ is the general default value
       if @configName then
         Makr.log.debug("config name is: \"" + @configName + "\"")
         config = @build.getConfig(@configName)
@@ -663,7 +692,7 @@ module Makr
 
 
     # this variable influences dependency checking by the compiler ("-M" or "-MM" option)
-    @@checkOnlyUserHeaders = false
+    @@checkOnlyUserHeaders = true
     def CompileTask.checkOnlyUserHeaders
       @@checkOnlyUserHeaders
     end
@@ -673,7 +702,6 @@ module Makr
 
 
     # make a unique name for CompileTasks out of the fileName which is to be compiled
-    # expects a Pathname or a String
     def CompileTask.makeName(fileName)
       "CompileTask__" + fileName
     end
@@ -690,7 +718,10 @@ module Makr
     attr_reader :fileName, :objectFileName
 
 
-    # build contains the global configuration, see Build.globalConfig and class Config
+    # arguments: fileName contains the file to be compiled, build references the Build object containing the tasks
+    # (including this one), configName is the name of the optional Config, fileIsGenerated specifies that
+    # the file to be compiled is generated (for example by the moc from Qt). If fileIsGenerated is true, the
+    # last argument must contain the task that generates it to add a dependency.
     def initialize(fileName, build, configName, fileIsGenerated = false, generatorTask = nil)
       @fileName = Makr.cleanPathName(fileName)
       # now we need a unique name for this task. As we're defining a FileTask as dependency to fileName
@@ -700,7 +731,9 @@ module Makr
       @build = build
       @configName = configName
 
-      # first add a dependency on the file itself, if it isnt generated
+      # first construct a dependency on the file itself, if it isnt generated
+      # (we dont add dependencies yet, as they get added upon automatic dependency generation in
+      # the function buildDependencies())
       @fileIsGenerated = fileIsGenerated
       @generatorTask = generatorTask
       if not @fileIsGenerated then
@@ -712,16 +745,16 @@ module Makr
         end
       end
 
-      # we just keep it simple for now and add a ".o" to the given fileName, as we cannot safely replace a suffix
+      # construct a dependency task on the target object file
       @objectFileName = makeObjectFileName(fileName)
-      # now add a dependency task on the target object file
       if not @build.hasTask?(@objectFileName) then
         @compileTarget = FileTask.new(@objectFileName, false)
         @build.addTask(@objectFileName, @compileTarget)
       else
         @compileTarget = @build.getTask(@objectFileName)
       end
-      # now add another dependency task on the config
+
+      # construct a dependency task on the configuration
       @configTaskName = ConfigTask.makeName(@name)
       if not @build.hasTask?(@configTaskName) then
         @configTask = ConfigTask.new(@configTaskName)
@@ -730,38 +763,45 @@ module Makr
         @configTask = @build.getTask(@configTaskName)
       end
 
-      # the following first deletes all deps and then constructs them including the @compileTarget and the @configTask
+      # the following first deletes all deps and then constructs them including tasks constructed above
       getDepsStringArrayFromCompiler()
       buildDependencies()
 
-      Makr.log.debug("made CompileTask with @name=\"" + @name + "\"")
+      Makr.log.debug("made CompileTask with @name=\"" + @name + "\"") # debug feedback
     end
 
 
+    # calls compiler with complete configuration options to automatically generate a list of dependency files
+    # the list is parsed in buildDependencies()
+    # Parsing is seperated from dependency generation because during the update step we also check
+    # dependencies but do no rebuild them as the tree should not be changed during multi-threaded update
     def getDepsStringArrayFromCompiler()
       # always clear input lines upon call
       @dependencyLines = Array.new
       # then check, if we need to to
-      return if @fileIsGenerated and (not File.file?(@fileName))
-      # we use the compiler for now, but maybe fastdep is worth a look / an adaption
+      return if (@fileIsGenerated and (not File.file?(@fileName)))
       # system headers are excluded using compiler option "-MM", else "-M"
       depCommand = makeCompilerCallString() + ((@@checkOnlyUserHeaders)?" -MM ":" -M ") + @fileName
       Makr.log.info("Executing compiler to check for dependencies in CompileTask: \"" + @fileName + "\"\n\t" + depCommand)
-      compilerPipe = IO.popen(depCommand)  # in ruby >= 1.9.2 we could use Open3.capture2(...) for this purpose (how do we?)
+      compilerPipe = IO.popen(depCommand)  # in ruby >= 1.9.2 we could use Open3.capture2(...) for this purpose
       @dependencyLines = compilerPipe.readlines
-      if @dependencyLines.empty?
-        Makr.log.error( "error in CompileTask: \"" + @fileName + \
+      if @dependencyLines.empty? then
+        Makr.log.fatal( "error in CompileTask: \"" + @fileName + \
                         "\" making dependencies failed, check file for syntax errors!")
+        Makr.abortBuild()
       end
     end
 
 
+    # parses the dependency files generated by the compiler in getDepsStringArrayFromCompiler().
+    # Parsing is seperated from dependency generation because during the update step we also check
+    # dependencies but do no rebuild them as the tree should not be changed during multi-threaded update
     def buildDependencies()
       clearDependencies()
       dependencyFiles = Array.new
       @dependencyLines.each do |depLine|
         depLine.strip! # remove white space and newlines
-        if depLine.include?('\\') # remove backslash on each line, if present
+        if depLine.include?('\\') then # remove backslash on each line, if present
           depLine.chop!
         end
         if depLine.include?(':') # the "xyz.o"-target specified by the compiler in the "Makefile"-rule needs to be skipped
@@ -786,13 +826,10 @@ module Makr
           addDependency(task) # dependencies cannot contain task if everything is coded right
         end
       end
-      # also we want the dependency on the file to be compiled itself
+      # now we also add the constructed dependencies again as we cleared all deps in the beginning
       addDependency(@compileFileDep) if not @fileIsGenerated
-      # need to do this or the compile task dep will be lost each time we build them deps here
       addDependency(@compileTarget)
-      # we need to add the config task again!
       addDependency(@configTask)
-
       addDependency(@generatorTask) if @fileIsGenerated
     end
 
@@ -809,17 +846,18 @@ module Makr
       Makr.log.info("Executing compiler in CompileTask: \"" + @fileName + "\"\n\t" + compileCommand)
       successful = system(compileCommand)
       if not successful then
-        Makr.log.fatal("compile error, exiting build process\n\n\n")
+        Makr.log.fatal("compile error, exiting build process\n#####################\n\n")
         Makr.abortBuild()
+        return false
       end
-      @compileTarget.update() # we call this to update file information on the compiled target
-      return true # right now, we are always true (we could check for target equivalence or something else
-                  # and then return false in case the target didnt change (based on file hash))
+      return @compileTarget.update() # we call this to update file information on the compiled target
+        # additionally this return true, if the target was changed, and false otherwise what is what
+        # we want to propagate
     end
 
 
     def postUpdate()
-      buildDependencies()  # assuming we have called the compiler already in update giving us the deps string
+      buildDependencies()  # assuming we have called the compiler already in update giving us the deps strings
     end
 
 
