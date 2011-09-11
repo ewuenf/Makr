@@ -1915,10 +1915,8 @@ module Makr
     tasks = Array.new
     fileCollection.each do |fileName|
       generatorArray.each do |gen|
+        return tasks if UpdateTraverser.abortUpdate # cooperatively abort build
         genTasks = gen.generate(fileName)
-        if genTasks and genTasks.size() == 2 then
-          yo = 2394
-        end
         tasks.concat(genTasks) if genTasks
       end
     end
@@ -2023,11 +2021,6 @@ end     # end of module makr ###################################################
 
 
 
-
-
-
-
-
 ####################################################################################################################
 
 # MAIN logic and interface with client code following
@@ -2041,8 +2034,11 @@ Makr.log.formatter = proc { |severity, datetime, progname, msg|
 }
 Makr.log << "\n\nmakr version 2011.09.11\n\n"  # just give short version notice on every startup (Date-encoded)
 
-# then set the signal handler to allow cooperative aborting of the build process
-Signal.trap("USR1")  { Makr::UpdateTraverser.abortUpdate = true }
+# then set the signal handler to allow cooperative aborting of the build process on SIGUSR1
+Signal.trap("USR1")  do
+  puts Makr.log.fatal("Aborting build on signal USR1")
+  Makr.abortBuild()
+end
 
 # we need a basic ScriptArguments object pushed to stack (kind of dummy holding ARGV)
 # we use a relative path here to allow moving of build dir
