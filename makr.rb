@@ -11,7 +11,8 @@
 # Some remarks: In general, we want relative paths, so that development dirs can be moved without whoes. 
 #               The user may still prefer absolute paths (and use them), but the script tries to make no assumptions.
 #               We also make no assumptions on the command lines arguments given, the user is free to parse
-#               his own parameter set. The only thing this script does is loading the Makrfile.rb and providing
+#               his own parameter set (using OptionParser from the stdlib for example).
+#               The only thing this script does is loading the Makrfile.rb and providing
 #               the command line argument in the ScriptArguments stack. The name "Makrfile.rb" is hardcoded, but
 #               the user may be free to use this file to load some other file and execute it depending on the
 #               parameters given on the command line.
@@ -338,7 +339,7 @@ module Makr
         # if none of the above match, we have a normal line and parse the key-value-pair and add it to the hash
         splitArr = line.split("\"=\"")
         if splitArr.size < 2 then
-          Makr.log.error("Parse error at line nr " + i.to_s)
+          Makr.log.error("Config parse error at line nr " + i.to_s)
           return false, i, parentName
         end
         @hash[(splitArr[0])[1..-1]] = (splitArr[-1])[0..-2] # skip the character " at the start and end
@@ -570,7 +571,7 @@ module Makr
           Makr.log.fatal("file " + @fileName + "  is unexpectedly missing!\n\n")
           Makr.abortBuild()
         end
-        Makr.log.info("FileTask " + @fileName + " is missing, so update() is true.")
+        Makr.log.info("file " + @fileName + " is missing, so update() in FileTask is true.")
         return true
       end
       stat = File.stat(@fileName);
@@ -659,11 +660,11 @@ module Makr
     # the dependencies are not included (this is done in update)
     def makeCompilerCallString() # g++ is the general default value
       if @configName then
-        Makr.log.debug("config name is: \"" + @configName + "\"")
+        Makr.log.debug("CompileTask " + @name + ": config name is: \"" + @configName + "\"")
         config = @build.getConfig(@configName)
         callString = String.new
         if (not config["compiler"]) then
-          Makr.log.warn("no compiler given, using default g++")
+          Makr.log.warn("CompileTask " + @name + ": no compiler given, using default g++")
           callString = "g++ "
         else
           callString = config["compiler"] + " "
@@ -683,7 +684,7 @@ module Makr
         end
         return callString
       else
-        Makr.log.warn("no config given, using bare g++")
+        Makr.log.warn("CompileTask " + @name + ": no config given, using bare g++")
         return "g++ "
       end
     end
@@ -782,11 +783,11 @@ module Makr
       return if (@fileIsGenerated and (not File.file?(@fileName)))
       # system headers are excluded using compiler option "-MM", else "-M"
       depCommand = makeCompilerCallString() + ((@@checkOnlyUserHeaders)?" -MM ":" -M ") + @fileName
-      Makr.log.info("Executing compiler to check for dependencies in CompileTask: \"" + @fileName + "\"\n\t" + depCommand)
+      Makr.log.info("Executing compiler to check for dependencies in CompileTask: \"" + @name + "\"\n\t" + depCommand)
       compilerPipe = IO.popen(depCommand)  # in ruby >= 1.9.2 we could use Open3.capture2(...) for this purpose
       @dependencyLines = compilerPipe.readlines
       if @dependencyLines.empty? then
-        Makr.log.fatal( "error in CompileTask: \"" + @fileName + \
+        Makr.log.fatal( "error in CompileTask for file \"" + @fileName + \
                         "\" making dependencies failed, check file for syntax errors!")
         Makr.abortBuild()
       end
@@ -843,10 +844,10 @@ module Makr
       getDepsStringArrayFromCompiler()
       # construct compiler command and execute it
       compileCommand = makeCompilerCallString() + " -c " + @fileName + " -o " + @objectFileName
-      Makr.log.info("Executing compiler in CompileTask: \"" + @fileName + "\"\n\t" + compileCommand)
+      Makr.log.info("CompileTask " + @name + ": Executing compiler\n\t" + compileCommand)
       successful = system(compileCommand)
       if not successful then
-        Makr.log.fatal("compile error, exiting build process\n#####################\n\n")
+        Makr.log.fatal("CompileTask " + @name + ": compile error, exiting build process\n#####################\n\n")
         Makr.abortBuild()
         return false
       end
@@ -861,6 +862,7 @@ module Makr
     end
 
 
+    # before this task gets deleted, we remove the object file
     def cleanupBeforeDeletion()
       system("rm -f " + @objectFileName)
     end
@@ -876,24 +878,26 @@ module Makr
 
 
 
-  # Represents a task related to the moc-preprozessor from the qt-library.
+  # Represents a task executing the "moc" code generator from "Qt".
   class MocTask < Task
 
+    # checks for presence of Q_OBJECT macro in file which indicates, that is needs to be processed by moc
     def MocTask.containsQ_OBJECTMacro?(fileName)
       IO.readlines(fileName).each do |line|
-        return true if (found = (line.strip == "Q_OBJECT"))
+        return true if (line.strip == "Q_OBJECT")
       end
       return false
     end
 
 
+    # constructing the string to call the moc out of the given config (or default values)
     def makeMocCallString()
       callString = String.new
       if @configName then
-        Makr.log.debug("moc config name is: \"" + @configName + "\"")
+        Makr.log.debug("MocTask " + @name + ": config name is: \"" + @configName + "\"")
         config = @build.getConfig(@configName)
         if (not config["moc"]) then
-          Makr.log.warn("no moc binary given, using moc in path")
+          Makr.log.warn("MocTask " + @name + ": no moc binary given, using moc in path")
           callString = "moc "
         else
           callString = config["moc"] + " "
@@ -902,7 +906,7 @@ module Makr
           callString += config["moc.flags"] + " "
         end
       else
-        Makr.log.warn("no config given, using default bare moc")
+        Makr.log.warn("MocTask " + @name + ": no config given, using default bare moc")
         callString = "moc "
       end
       return callString
@@ -911,8 +915,7 @@ module Makr
     alias :getConfigString :makeMocCallString
 
 
-    # make a unique name for CompileTasks out of the fileName which is to be compiled
-    # expects a Pathname or a String
+    # make a unique name for a MocTask out of the given fileName
     def MocTask.makeName(fileName)
       "MocTask__" + fileName
     end
