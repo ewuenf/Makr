@@ -881,12 +881,22 @@ module Makr
   # Represents a task executing the "moc" code generator from "Qt".
   class MocTask < Task
 
+    # the path of the input and output file of the compilation
+    attr_reader :fileName, :mocFileName
+
+
     # checks for presence of Q_OBJECT macro in file which indicates, that is needs to be processed by moc
     def MocTask.containsQ_OBJECTMacro?(fileName)
       IO.readlines(fileName).each do |line|
         return true if (line.strip == "Q_OBJECT")
       end
       return false
+    end
+
+
+    # make a unique name for a MocTask out of the given fileName
+    def MocTask.makeName(fileName)
+      "MocTask__" + fileName
     end
 
 
@@ -915,58 +925,56 @@ module Makr
     alias :getConfigString :makeMocCallString
 
 
-    # make a unique name for a MocTask out of the given fileName
-    def MocTask.makeName(fileName)
-      "MocTask__" + fileName
-    end
-
-    
-    def MocTask.makeMocFileName(fileName, build, configName)
+    def makeMocFileName()
       # default pre- and suffix for generated moc file
       prefix = "" # default is no prefix to allow sort by name in file manager
       suffix = ".moc_gen.cpp"
       # check if user supplied other values via config
-      if configName then
-        config = build.getConfig(configName)
+      if @configName then
+        config = @build.getConfig(@configName)
         prefix = config["moc.filePrefix"] if (config["moc.filePrefix"])
         suffix = config["moc.fileSuffix"] if (config["moc.fileSuffix"])
       end
-      build.buildPath + "/" + prefix + File.basename(fileName) + suffix
+      @build.buildPath + "/" + prefix + fileName.gsub('/', '_').gsub('.', '_') + suffix
     end
-
-
-    # the path of the input and output file of the compilation
-    attr_reader :fileName, :mocFileName
 
 
     # build contains the global configuration, see Build.globalConfig and class Config
     def initialize(fileName, build, configName)
       @fileName = Makr.cleanPathName(fileName)
-      # now we need a unique name for this task. As we're defining a FileTask as dependency to fileName
-      # and a FileTask on the @objectFileName to ensure a build of the target if it was deleted or
+      # now we need a unique name for this task. As we're defining a FileTask as dependency to @fileName
+      # and a FileTask on the @mocFileName to ensure a build of the target if it was deleted or
       # otherwise modified (whatever you can think of here), we need a unique name not related to these
       super(MocTask.makeName(@fileName))
       @build = build
       @configName = configName
-      @mocFileName = MocTask.makeMocFileName(@fileName, @build, @configName)
+      @mocFileName = makeMocFileName()
 
-      # now add a dependency task on the moc output file
-      if not @build.hasTask?(@mocFileName) then
-        @mocTarget = FileTask.new(@mocFileName, false)
-        @build.addTask(@mocFileName, @mocTarget)
+      # first we need a dep on the input file
+      if not @build.hasTask?(@fileName) then
+        @inputFileDep = FileTask.new(@fileName)
+        @build.addTask(@fileName, @inputFileDep)
       else
-        @mocTarget = @build.getTask(@mocFileName)
+        @inputFileDep = @build.getTask(@fileName)
       end
-      addDependency(@mocTarget)
-      # now add another dependency task on the config
+      addDependency(@inputFileDep)
+      # now add a dep on the moc output file
+      if not @build.hasTask?(@mocFileName) then
+        @mocTargetDep = FileTask.new(@mocFileName, false)
+        @build.addTask(@mocFileName, @mocTargetDep)
+      else
+        @mocTargetDep = @build.getTask(@mocFileName)
+      end
+      addDependency(@mocTargetDep)
+      # now add another dep on the config
       @configTaskName = ConfigTask.makeName(@name)
       if not @build.hasTask?(@configTaskName) then
-        @configTask = ConfigTask.new(@configTaskName)
-        @build.addTask(@configTaskName, @configTask)
+        @configDep = ConfigTask.new(@configTaskName)
+        @build.addTask(@configTaskName, @configDep)
       else
-        @configTask = @build.getTask(@configTaskName)
+        @configDep = @build.getTask(@configTaskName)
       end
-      addDependency(@configTask)
+      addDependency(@configDep)
 
       Makr.log.debug("made MocTask with @name=\"" + @name + "\"")
     end
@@ -981,17 +989,19 @@ module Makr
         Makr.log.fatal("moc error, exiting build process\n\n\n")
         Makr.abortBuild()
       end
-      @mocTarget.update() # we call this to update file information on the compiled target
+      @mocTargetDep.update() # we call this to update file information on the compiled target
       return true # right now, we are always true (we could check for target equivalence or something else
                   # and then return false in case the target didnt change (based on file hash))
     end
 
 
+    # this task wants to be deleted if the file no longer contains the Q_OBJECT macro (TODO is this correct?)
     def mustBeDeleted?()
       return (not MocTask.containsQ_OBJECTMacro?(@fileName))
     end
 
 
+    # remove possibly remaining generated mocced file before deletion
     def cleanupBeforeDeletion()
       system("rm -f " + @mocFileName)
     end
@@ -1025,6 +1035,20 @@ module Makr
     end
 
 
+    def checkDependencyTasksForPIC()
+      @dependencies.each do |dep|
+        if dep.kind_of?(CompileTask) then
+          raise "[makr] DynamicLibTask wants configName in dependency CompileTask" + dep.name + "!" if not dep.configName
+          config = @build.getConfig(dep.configName)
+          if (not (config["compiler.cFlags"].include?("-fPIC") or config["compiler.cFlags"].include?("-fpic"))) then
+            raise "[makr] DynamicLibTask wants -fPIC or -fpic in config[\"compiler.cFlags\"] of dependency CompileTasks!"
+          end
+        end
+      end
+    end
+
+
+    
     def makeLinkerCallString() # g++ is always default value
       if @configName then
         Makr.log.debug("config name is: \"" + @configName + "\"")
@@ -1071,6 +1095,7 @@ module Makr
       @build = build
       @configName = configName
 
+      # we need a dep on the lib target
       if not @build.hasTask?(@libPath) then
         @targetFileTask = FileTask.new(@libPath, false)
         @build.addTask(@libPath, @targetFileTask)
@@ -1093,6 +1118,8 @@ module Makr
 
 
     def update()
+      # we always check for properly setup dependencies
+      checkDependencyTasksForPIC()
       # build compiler command and execute it
       linkCommand = makeLinkerCallString() + " -o " + @libPath
       @dependencies.each do |dep|
@@ -1122,11 +1149,11 @@ module Makr
 
 
   
-  def Makr.makeDynamicLib(libName, build, taskCollection, libConfig = nil)
-    Makr.cleanPathName(libName)
-    libTaskName = DynamicLibTask.makeName(libName)
+  def Makr.makeDynamicLib(libFileName, build, taskCollection, libConfig = nil)
+    Makr.cleanPathName(libFileName)
+    libTaskName = DynamicLibTask.makeName(libFileName)
     if not build.hasTask?(libTaskName) then
-      build.addTask(libTaskName, DynamicLibTask.new(libName, build, libConfig))
+      build.addTask(libTaskName, DynamicLibTask.new(libFileName, build, libConfig))
     end
     libTask = build.getTask(libTaskName)
     libTask.addDependencies(taskCollection)
@@ -1156,7 +1183,7 @@ module Makr
   
   class StaticLibTask < Task
     # special static lib thingies (see http://www.faqs.org/docs/Linux-HOWTO/Program-Library-HOWTO.html)
-    # ar rcs my_library.a file1.o file2.o
+    # standard construction is: "ar rcs my_library.a file1.o file2.o ..."
 
     attr_reader    :libName  # basename of the lib to be build
     attr_reader    :libPath  # full path of the lib to be build (but not necessarily absolute path, depends on user)
@@ -1168,7 +1195,7 @@ module Makr
     end
 
 
-    def makeLinkerCallString() # g++ is always default value
+    def makeLinkerCallString() # "ar rcs" is default value
       if @configName then
         Makr.log.debug("config name is: \"" + @configName + "\"")
         config = @build.getConfig(@configName)
@@ -1190,22 +1217,23 @@ module Makr
 
 
     # libPath should be the complete path (absolute or relative) of the library with all standard fuss, like "libxy.a"
-    def initialize(libPath, build, configName)
-      @libPath = Makr.cleanPathName(libPath)
-      @libName = File.basename(@libPath)
-      super(DynamicLibTask.makeName(@libPath))
+    def initialize(libFileName, build, configName)
+      @libFileName = Makr.cleanPathName(libFileName)
+      @libName = File.basename(@libFileName)
+      super(StaticLibTask.makeName(@libFileName))
       @build = build
       @configName = configName
 
-      if not @build.hasTask?(@libPath) then
-        @targetFileTask = FileTask.new(@libPath, false)
-        @build.addTask(@libPath, @targetFileTask)
+      # first we need a dependency on the target
+      if not @build.hasTask?(@libFileName) then
+        @targetDep = FileTask.new(@libFileName, false)
+        @build.addTask(@libFileName, @targetDep)
       else
-        @targetFileTask = @build.getTask(@libPath)
+        @targetDep = @build.getTask(@libFileName)
       end
-      addDependency(@targetFileTask)
+      addDependency(@targetDep)
       # now add another dependency task on the config
-      @configTaskName = ConfigTask.makeName(@libPath)
+      @configTaskName = ConfigTask.makeName(@libFileName)
       if not @build.hasTask?(@configTaskName) then
         @configTask = ConfigTask.new(@configTaskName)
         @build.addTask(@configTaskName, @configTask)
@@ -1220,7 +1248,7 @@ module Makr
 
     def update()
       # build compiler command and execute it
-      linkCommand = makeLinkerCallString() + @libPath
+      linkCommand = makeLinkerCallString() + @libFileName
       @dependencies.each do |dep|
         # we only want dependencies that provide an object file
         if dep.instance_variable_defined?("@objectFileName") then
@@ -1233,13 +1261,13 @@ module Makr
         Makr.log.fatal("linker error, exiting build process\n\n\n")
         Makr.abortBuild()
       end
-      @targetFileTask.update() # we call this to update file information on the compiled target
+      @targetDep.update() # we call this to update file information on the compiled target
       return true # we could check here for target change like proposed in CompileTask.update
     end
 
 
     def cleanupBeforeDeletion()
-      system("rm -f " + @libPath)
+      system("rm -f " + @libFileName)
     end
   end
 
@@ -1249,11 +1277,11 @@ module Makr
   
 
 
-  def Makr.makeStaticLib(libName, build, taskCollection, libConfig = nil)
-    Makr.cleanPathName(libName)
-    libTaskName = StaticLibTask.makeName(libName)
+  def Makr.makeStaticLib(libFileName, build, taskCollection, libConfig = nil)
+    Makr.cleanPathName(libFileName)
+    libTaskName = StaticLibTask.makeName(libFileName)
     if not build.hasTask?(libTaskName) then
-      build.addTask(libTaskName, StaticLibTask.new(libName, build, libConfig))
+      build.addTask(libTaskName, StaticLibTask.new(libFileName, build, libConfig))
     end
     libTask = build.getTask(libTaskName)
     libTask.addDependencies(taskCollection)
@@ -1331,6 +1359,7 @@ module Makr
       @build = build
       @configName = configName
 
+      # first we make dependency on the target program file
       if not @build.hasTask?(@programName) then
         @compileTarget = FileTask.new(@programName, false)
         @build.addTask(@programName, @compileTarget)
