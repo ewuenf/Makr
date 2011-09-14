@@ -723,6 +723,8 @@ module Makr
     # (including this one), configName is the name of the optional Config, fileIsGenerated specifies that
     # the file to be compiled is generated (for example by the moc from Qt). If fileIsGenerated is true, the
     # last argument must contain the task that generates it to add a dependency.
+    # The options accepted in the Config referenced by configName could be "compiler", "compiler.cFlags", "compiler.defines"
+    # "compiler.includePaths", "compiler.otherOptions" (see also function makeCompilerCallString() )
     def initialize(fileName, build, configName, fileIsGenerated = false, generatorTask = nil)
       @fileName = Makr.cleanPathName(fileName)
       # now we need a unique name for this task. As we're defining a FileTask as dependency to fileName
@@ -939,7 +941,8 @@ module Makr
     end
 
 
-    # build contains the global configuration, see Build.globalConfig and class Config
+    # The options accepted in the Config referenced by configName could be "moc" and "moc.flags"
+    # (see also function makeMocCallString() )
     def initialize(fileName, build, configName)
       @fileName = Makr.cleanPathName(fileName)
       # now we need a unique name for this task. As we're defining a FileTask as dependency to @fileName
@@ -1018,15 +1021,16 @@ module Makr
 
   
 
-
-  # creating a dynamic lib requires compiling the object files with -fPIC flag!!!!!!!!!!!!! #############
+  # This class constructs a dynamic library.
+  # Creating a dynamic lib requires compiling the object files with -fPIC or -fpic flag handed to the compiler
+  # (this is checked upon update() !).
   class DynamicLibTask < Task
 
     # special dynamic lib thingies (see http://www.faqs.org/docs/Linux-HOWTO/Program-Library-HOWTO.html)
 
 
     attr_reader    :libName  # basename of the lib to be build
-    attr_reader    :libPath  # full path of the lib to be build (but not necessarily absolute path, depends on user)
+    attr_reader    :libFileName  # full path of the lib to be build (but not necessarily absolute path, depends on user)
 
 
     # make a unique name
@@ -1035,6 +1039,7 @@ module Makr
     end
 
 
+    # checks each dependency if it includes the compiler flag "-fPIC" or "-fpic", if it is a CompileTask
     def checkDependencyTasksForPIC()
       @dependencies.each do |dep|
         if dep.kind_of?(CompileTask) then
@@ -1086,25 +1091,29 @@ module Makr
     alias :getConfigString :makeLinkerCallString
 
 
-    # libPath should be the complete path (absolute or relative) of the library with all standard fuss, like "libxy.so.1.2.3"
-    # (if you want a different soname for the lib, pass it as option with the config identified by configName)
-    def initialize(libPath, build, configName)
-      @libPath = Makr.cleanPathName(libPath)
-      @libName = File.basename(@libPath)
-      super(DynamicLibTask.makeName(@libPath))
+    # libFileName should be the complete path (absolute or relative) of the library with all standard fuss, like
+    # "build/libxy.so.1.2.3"
+    # (if you want a different soname for the lib, pass it as option with the config identified by configName,
+    # for example like this: config["linker.otherOptions"]=" -Wl,-soname,libSpecialName.so.1")
+    # The options accepted in the Config referenced by configName could be "linker", "linker.lFlags",
+    # "linker.libs" and "linker.otherOptions" (see also function makeLinkerCallString() ).
+    def initialize(libFileName, build, configName)
+      @libFileName = Makr.cleanPathName(libFileName)
+      @libName = File.basename(@libFileName)
+      super(DynamicLibTask.makeName(@libFileName))
       @build = build
       @configName = configName
 
       # we need a dep on the lib target
-      if not @build.hasTask?(@libPath) then
-        @targetFileTask = FileTask.new(@libPath, false)
-        @build.addTask(@libPath, @targetFileTask)
+      if not @build.hasTask?(@libFileName) then
+        @targetFileTask = FileTask.new(@libFileName, false)
+        @build.addTask(@libFileName, @targetFileTask)
       else
-        @targetFileTask = @build.getTask(@libPath)
+        @targetFileTask = @build.getTask(@libFileName)
       end
       addDependency(@targetFileTask)
       # now add another dependency task on the config
-      @configTaskName = ConfigTask.makeName(@libPath)
+      @configTaskName = ConfigTask.makeName(@libFileName)
       if not @build.hasTask?(@configTaskName) then
         @configTask = ConfigTask.new(@configTaskName)
         @build.addTask(@configTaskName, @configTask)
@@ -1121,7 +1130,7 @@ module Makr
       # we always check for properly setup dependencies
       checkDependencyTasksForPIC()
       # build compiler command and execute it
-      linkCommand = makeLinkerCallString() + " -o " + @libPath
+      linkCommand = makeLinkerCallString() + " -o " + @libFileName
       @dependencies.each do |dep|
         # we only want dependencies that provide an object file
         if dep.instance_variable_defined?("@objectFileName") then
@@ -1140,7 +1149,7 @@ module Makr
 
 
     def cleanupBeforeDeletion()
-      system("rm -f " + @libPath)
+      system("rm -f " + @libFileName)
     end
   end
 
@@ -1148,7 +1157,8 @@ module Makr
 
 
 
-  
+  # constructs a dynamic lib target with the given taskCollection as dependencies, takes an optional libConfig
+  # for configuration options. Sets default task in build!
   def Makr.makeDynamicLib(libFileName, build, taskCollection, libConfig = nil)
     Makr.cleanPathName(libFileName)
     libTaskName = DynamicLibTask.makeName(libFileName)
@@ -1180,13 +1190,14 @@ module Makr
   
 
 
-  
+  # This class constructs a static library. No special flags are needed as compared to DynamicLibTask regarding
+  # the CompileTasks.
   class StaticLibTask < Task
     # special static lib thingies (see http://www.faqs.org/docs/Linux-HOWTO/Program-Library-HOWTO.html)
     # standard construction is: "ar rcs my_library.a file1.o file2.o ..."
 
     attr_reader    :libName  # basename of the lib to be build
-    attr_reader    :libPath  # full path of the lib to be build (but not necessarily absolute path, depends on user)
+    attr_reader    :libFileName  # path of the lib to be build (does not need to be absolute)
 
 
     # make a unique name
@@ -1216,7 +1227,8 @@ module Makr
     alias :getConfigString :makeLinkerCallString
 
 
-    # libPath should be the complete path (absolute or relative) of the library with all standard fuss, like "libxy.a"
+    # libFileName should be the complete path (absolute or relative) of the library with all standard fuss, like "build/libxy.a".
+    # Giving a config is typically unnecessary.
     def initialize(libFileName, build, configName)
       @libFileName = Makr.cleanPathName(libFileName)
       @libName = File.basename(@libFileName)
@@ -1276,7 +1288,8 @@ module Makr
 
   
 
-
+  # constructs a static lib target with the given taskCollection as dependencies, takes an optional libConfig
+  # for configuration options. Sets default task in build!
   def Makr.makeStaticLib(libFileName, build, taskCollection, libConfig = nil)
     Makr.cleanPathName(libFileName)
     libTaskName = StaticLibTask.makeName(libFileName)
@@ -1306,7 +1319,7 @@ module Makr
 
 
 
-  
+  # This class represents a task, that build a program.
   class ProgramTask < Task
 
     attr_reader    :programName  # identifies the binary to be build, wants full path as usual
@@ -1353,6 +1366,8 @@ module Makr
     alias :getConfigString :makeLinkerCallString
 
     
+    # The options accepted in the Config referenced by configName could be "linker", "linker.lFlags",
+    # "linker.libs" and "linker.otherOptions" (see also function makeLinkerCallString() ).
     def initialize(programName, build, configName)
       @programName = Makr.cleanPathName(programName)
       super(ProgramTask.makeName(@programName))
@@ -1409,7 +1424,8 @@ module Makr
 
 
 
-
+  # constructs a ProgramTask with the given taskCollection as dependencies, takes an optional programConfig
+  # for configuration options. Sets default task in build!
   def Makr.makeProgram(progName, build, taskCollection, programConfig = nil)
     Makr.cleanPathName(progName)
     programTaskName = ProgramTask.makeName(progName)
@@ -1433,17 +1449,22 @@ module Makr
   
   
 
-
+  # One of the central classes in Makr. Identifies a build variant (in a given buildPath). Instances of Build
+  # store configurations and tasks and restore them the next time makr is called. Without this cache,
+  # everything would be rebuild (no checking for existing targets etc.). Nevertheless this class has automatic
+  # cleanup and pruning of the configs and tasks in the cache.
   class Build
 
     attr_reader   :buildPath, :configs, :postUpdates
     attr_accessor :defaultTask, :nrOfThreads
 
 
-    # build path should be absolute and is read-only once set in this "ctor"
+    # build path identifies the build directory where the cache of configs and tasks is stored in a
+    # subdirectory ".makr" and loaded upon construction, if the cache exists (which is fundamental to the
+    # main build functionality "rebuild only tasks, that need it").
     def initialize(buildPath) 
       @buildPath = Makr.cleanPathName(buildPath)
-      @buildPath.freeze
+      @buildPath.freeze # make sure this isnt changed during execution
 
       @postUpdates = Array.new
 
@@ -1461,11 +1482,15 @@ module Makr
     end
 
 
-    def build(taskName = nil)
+    # central function for building a given task. If task is not given, the defaultTask is used
+    # or if even that one is not set, a root tasks with no dependant tasks is searched and
+    # constructed. If even that fails, an exception is thrown.
+    # The variable nrOfThreads influences, how many threads perform the update. If
+    # no number is given, the number of available processors is used (see ThreadPool).
+    def build(task = nil)
       updateTraverser = UpdateTraverser.new(@nrOfThreads)
-      if taskName.kind_of? String then
-        raise("unknown taskName: " + taskName) if not hasTask?(taskName)
-        updateTraverser.traverse(getTask(taskName))
+      if task then
+        updateTraverser.traverse(task)
         return
       else
         # check default task or search for a single task without dependant tasks (but give warning)
@@ -1477,7 +1502,10 @@ module Makr
           @taskHash.each_value do |value|
             taskFound.push(value) if value.dependantTasks.empty?
           end
-          if taskFount.size == 1 then
+          if taskFound.size >= 1 then
+            if taskFound.size > 1 then
+              Makr.log.warn("more than one root task found, taking the first found, which is: " + taskFound.first.name)
+            end
             updateTraverser.traverse(taskFound.first)
           else
             raise "failed with all fallbacks in Build.build"
@@ -1706,7 +1734,9 @@ module Makr
   end
 
 
-
+  # Constructs a build from the caches found in the ".makr"-subDir in the given buildPath, if they
+  # exist. Otherwise makes everything new (dirs and Build object). In either case, a Build object
+  # is returned.
   def Makr.loadBuild(buildPath)
     buildPath = Makr.cleanPathName(buildPath)
     buildPathMakrDir = buildPath + "/.makr"
@@ -1733,23 +1763,25 @@ module Makr
   end
 
   
-
+  # Saves the Build to the ".makr"-subdir of the buildPath. 
   def Makr.saveBuild(build, cleanupConfigs = true)
     build.dumpConfigs(cleanupConfigs)
-    build.prepareDump()
+    build.prepareDump() # exchanges task hashes
     saveFileName = build.buildPath + "/.makr/build.ruby_marshal_dump"
     File.open(saveFileName, "wb") do |dumpFile|
       Marshal.dump(build, dumpFile)
     end
-    build.unprepareDump()
+    build.unprepareDump() # as the user may use the build after save, we exchange the task hashes again
   end
 
 
 
   
-
+  # This class realizes the multi-threaded update step.
+  # It can be used stand-alone, but typically calling Build::build() is the standard way to do it.
   class UpdateTraverser
 
+    # this class variable is used to realize cooperative build abort, see Makr::abortBuild()
     @@abortUpdate = false
     def UpdateTraverser.abortUpdate
       @@abortUpdate
@@ -1758,7 +1790,8 @@ module Makr
       @@abortUpdate = arg
     end
 
-    
+
+    # nested class representing a single task update, executed in a thread pool
     class Updater
       
       def initialize(task, threadPool)
@@ -1768,7 +1801,7 @@ module Makr
       
       # we need to go up the tree with the traversal even in case dependency did not update
       # just to increase the dependenciesUpdatedCount in each marked node so that in case
-      # of the update of a single child, the node will surely be updated! An intermediate node
+      # of the update of a single (sub-)child, the node will surely be updated! An intermediate node up to the root
       # might not be updated, as the argument callUpdate is false, but the algorithm logic
       # still needs to handle dependant tasks for the above reason.
       def run(callUpdate)
@@ -1782,7 +1815,7 @@ module Makr
           if callUpdate then
             retVal = @task.update()
           end
-          return if UpdateTraverser.abortUpdate # cooperatively abort build
+          return if UpdateTraverser.abortUpdate # cooperatively abort build (inserted here again for faster reaction)
           @task.updateMark = false
           @task.dependantTasks.each do |dependantTask|
             dependantTask.mutex.synchronize do
@@ -1816,7 +1849,7 @@ module Makr
     # of threads is limited by a thread pool.
     #
     # TODO: We expect the DAG to have no cycles here. Should we check?
-    def traverse(root) 
+    def traverse(root)
       collectedTasksWithNoDeps = Array.new
       recursiveMarkAndCollectTasksWithNoDeps(root, collectedTasksWithNoDeps)
       collectedTasksWithNoDeps.uniq!
@@ -1828,7 +1861,8 @@ module Makr
       @threadPool.join()
     end
 
-    
+
+    # internal helper function (see also traverse(root) )
     def recursiveMarkAndCollectTasksWithNoDeps(task, collectedTasksWithNoDeps)
       # prepare the task variables upon descend
       task.updateMark = true
@@ -1860,9 +1894,10 @@ module Makr
   # build construction helper classes
 
 
+  # Helps collecting files given directories and patterns. All methods are static.
   class FileCollector
 
-    # dirName is expected to be a path name
+    # dirName is expected to be a path name, pattern could be "*" or "*.cpp" or "*.{cpp,cxx,CPP}", etc.
     def FileCollector.collect(dirName, pattern = "*", recurse = true)
       fileCollection = Array.new
       privateCollect(dirName, pattern, nil, fileCollection, recurse)  # exclusion pattern is empty
@@ -1877,6 +1912,7 @@ module Makr
       return FileCollector.collect(dirName, pattern, false)
     end
 
+    # additional collector with exclusion pattern given
     def FileCollector.collectExclude(dirName, pattern, exclusionPattern, recurse = true)
       fileCollection = Array.new
       privateCollect(dirName, pattern, exclusionPattern, fileCollection, recurse)
@@ -1909,8 +1945,16 @@ module Makr
 
 
 
+
+
+  
+  # Generator classes used in conjunction with Makr.applyGenerators(fileCollection, generatorArray). See examples.
+  # The generate(fileName)-functions in each class return an Array of tasks, that contains all generated tasks or
+  # is empty in case of failure.
+
   
 
+  # Produces a CompileTask for every fileName given, if it does not exist. All CompileTask objects get the configName given.
   class CompileTaskGenerator
 
     def initialize(build, configName = nil)
@@ -1936,6 +1980,8 @@ module Makr
 
 
 
+  # Produces a MocTask for every fileName given, if it does not exist and an additional CompileTask for the generated file.
+  # All CompileTask objects get the compileTaskConfigName if given, all MocTasks get the mocTaskConfigName.
   class MocTaskGenerator
 
     def initialize(build, compileTaskConfigName = nil, mocTaskConfigName = nil)
@@ -1947,7 +1993,7 @@ module Makr
 
     def generate(fileName)
       # first check, if file has Q_OBJECT, otherwise we return no tasks
-      return nil if not MocTask.containsQ_OBJECTMacro?(fileName)
+      return Array.new if not MocTask.containsQ_OBJECTMacro?(fileName)
 
       # Q_OBJECT contained, now go on
       Makr.cleanPathName(fileName)
@@ -1978,7 +2024,10 @@ module Makr
 
 
   
-  # can be called with an array of file names or a single file name
+  # Can be called with an array of file names in fileCollection (as produced by FileCollector) or just a single file name.
+  # On each file in fileCollection, all generators from generatorArray are executed. During this (maybe lengthy) operation,
+  # the build could be aborted (for example by user request or fatal generator error). This function returns an array of
+  # tasks that can be used to construct a DynamicLibTask or StaticLibTask or ProgramTask, etc.
   def Makr.applyGenerators(fileCollection, generatorArray)
     # first check, if we only have a single file
     fileCollection = [Makr.cleanPathName(fileCollection)] if fileCollection.kind_of? String
@@ -1987,7 +2036,7 @@ module Makr
       generatorArray.each do |gen|
         return tasks if UpdateTraverser.abortUpdate # cooperatively abort build
         genTasks = gen.generate(fileName)
-        tasks.concat(genTasks) if genTasks
+        tasks.concat(genTasks)
       end
     end
     return tasks
@@ -2014,7 +2063,7 @@ module Makr
 
   
 
-  # script argument management
+  # script argument management (facility for calling sub-Makrfiles)
 
   class ScriptArguments
 
@@ -2102,7 +2151,7 @@ Makr.log.level = Logger::DEBUG
 Makr.log.formatter = proc { |severity, datetime, progname, msg|
     "[makr #{severity} #{datetime}]    #{msg}\n"
 }
-Makr.log << "\n\nmakr version 2011.09.11\n\n"  # just give short version notice on every startup (Date-encoded)
+Makr.log << "\n\nmakr version 2011.09.14\n\n"  # just give short version notice on every startup (Date-encoded)
 
 # then set the signal handler to allow cooperative aborting of the build process on SIGUSR1
 Signal.trap("USR1")  do
