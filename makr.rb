@@ -1962,19 +1962,21 @@ module Makr
       @configName = configName
     end
 
-    
+
     def generate(fileName)
       Makr.cleanPathName(fileName)
       compileTaskName = CompileTask.makeName(fileName)
       if not @build.hasTask?(compileTaskName) then
-        localTask = CompileTask.new(fileName, @build, @configName)
-        @build.addTask(compileTaskName, localTask)
+        @build.addTask(compileTaskName, CompileTask.new(fileName, @build, @configName))
       end
-      tasks = Array.new
-      tasks.push(@build.getTask(compileTaskName))
-      return tasks
+      localTask = @build.getTask(compileTaskName)
+      if localTask.configName != @configName then
+        Makr.log.warn( "configName has changed in task " + localTask.name + \
+                       " compared to cached version, setting to new value: " + @configName)
+        localTask.configName = @configName
+      end
+      return [localTask]
     end
-    
   end
 
 
@@ -2003,14 +2005,24 @@ module Makr
         @build.addTask(mocTaskName, mocTask)
       end
       mocTask = @build.getTask(mocTaskName)
-      tasks = Array.new
-      tasks.push(mocTask)
+      if mocTask.configName != @mocTaskConfigName then
+        Makr.log.warn( "configName has changed in task " + mocTask.name + \
+                       " compared to cached version, setting to new value: " + @mocTaskConfigName)
+        mocTask.configName = @mocTaskConfigName
+      end
+      tasks = [mocTask]
+      # TODO make common code with CompileTaskGenerator for the following
       compileTaskName = CompileTask.makeName(mocTask.mocFileName)
       if not @build.hasTask?(compileTaskName) then
         compileTask = CompileTask.new(mocTask.mocFileName, @build, @compileTaskConfigName, true, mocTask)
         @build.addTask(compileTaskName, compileTask)
       end
       compileTask = @build.getTask(compileTaskName)
+      if compileTask.configName != @compileTaskConfigName then
+        Makr.log.warn( "configName has changed in task " + compileTask.name + \
+                       " compared to cached version, setting to new value: " + @compileTaskConfigName)
+        compileTask.configName = @compileTaskConfigName
+      end
       tasks.push(compileTask)
       return tasks
     end
