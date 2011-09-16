@@ -5,20 +5,19 @@ Was passiert, wenn ein Unterscript beendet wird mit exit?
   SystemExit-exception, Multithreading scheint ein Problem zu sein
 
 
-Konzepte:
-********
-
-Configs werden in Tasks per Namen referenziert, da sie so am flexibelsten
-  einsetzbar sind. Ausserdem wird beim Speichern des TaskHash so keine redundante Information
-  gespeichert, sondern nur der Identifier
-
-
-
 TODO:
 *****
 
 Beispiele aufsplitten oder alle Möglichkeiten in einem großem Beispiel-Makrfile (oder beides ;-) )
 Unterprojekte möglichst abgetrennt
 Named arguments umsetzen?
-wenn build abgebrochen wird, soll er dann per default trotzdem gesaved werden?
 block-idiom (wie bei File.open) einsetzen, um build zu speichern bei exceptions etc?
+
+Datei zu ArrayOfTasks-Hash? ( convenient, z.B. zum umfassenden Build *einer* Datei über eine IDE wie eclipse mit allen relevanten Tasks
+
+                              Alternative ist über alle Tasks iterieren und über ein generelles fileName-Attribut 
+                              einsammeln was schwierig ist bei Tasks die mit mehreren Dateien zu tun haben wollen 
+                              (also eher fileNames-Array pro task?)
+                            )
+
+Update bei Dateien: Wenn md5 verwendet, dann nur md5 entscheidend, ansonsten nur Dateiattribute (mod-time || size)
