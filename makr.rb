@@ -262,7 +262,7 @@ module Makr
     end
 
 
-    # accessor function, like hash. See examples of Config usage
+    # accessor function, like hash, see examples. TODO: return empty string instead of nil (more user-friendly?)?
     def [](key)
       if @hash.has_key?(key) or not @parent then
         # we have the key and return it or we have no parent and return nil (the hash returns nil if it hasnt got the key)
