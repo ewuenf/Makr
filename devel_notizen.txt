@@ -9,14 +9,6 @@ TODO:
 *****
 
 Beispiele aufsplitten oder alle Möglichkeiten in einem großem Beispiel-Makrfile (oder beides ;-) )
-Unterprojekte möglichst abgetrennt
-Named arguments umsetzen?
+Unterprojekte möglichst abgetrennt und testen!!
 
-Datei zu ArrayOfTasks-Hash? ( convenient, z.B. zum umfassenden Build *einer* Datei über eine IDE wie eclipse mit allen relevanten Tasks
-
-                              Alternative ist über alle Tasks iterieren und über ein generelles fileName-Attribut 
-                              einsammeln was schwierig ist bei Tasks die mit mehreren Dateien zu tun haben wollen 
-                              (also eher fileNames-Array pro task?)
-                            )
-
-Update bei Dateien: Wenn md5 verwendet, dann nur md5 entscheidend, ansonsten nur Dateiattribute (mod-time || size)
+[Named arguments umsetzen?]

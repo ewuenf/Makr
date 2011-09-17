@@ -203,6 +203,13 @@ module Makr
     end
 
 
+    # constructs and return a new Config with this config as parent
+    def makeChild(newName)
+      Config.new(newName, self)
+    end
+    alias :derive :makeChild
+    
+
     def setParent(parent)
       unparent()
       @parent =  parent
@@ -574,20 +581,22 @@ module Makr
         Makr.log.info("file " + @fileName + " is missing, so update() in FileTask is true.")
         return true
       end
-      stat = File.stat(@fileName);
+      # now we either use the hash of the file or we use file attributes to determine changes
       retValue = false
-      if (@time != stat.mtime) then
-        @time = stat.mtime
-        retValue = true
-      end
-      if (@size != stat.size) then
-        @size = stat.size
-        retValue = true
-      end
-      if @@useFileHash then
+      if @@useFileHash then # file hash
         curHash = MD5.new(open(@fileName, 'rb').read).hexdigest
         if(@fileHash != curHash)
           @fileHash = curHash
+          retValue = true
+        end
+      else # file attribs checking
+        stat = File.stat(@fileName);
+        if (@time != stat.mtime) then
+          @time = stat.mtime
+          retValue = true
+        end
+        if (@size != stat.size) then
+          @size = stat.size
           retValue = true
         end
       end
@@ -1456,7 +1465,7 @@ module Makr
   class Build
 
     attr_reader   :buildPath, :configs, :postUpdates
-    attr_accessor :defaultTask, :nrOfThreads
+    attr_accessor :defaultTask, :nrOfThreads, :fileHash
 
 
     # build path identifies the build directory where the cache of configs and tasks is stored in a
@@ -1468,9 +1477,11 @@ module Makr
 
       @postUpdates = Array.new
 
-      # task hash
+      # hash from taskName to task
       @taskHash      = Hash.new            # maps task names to tasks (names are for example full path file names)
       @taskHashCache = Hash.new            # a cache for the task hash that is loaded below
+      # hash  from fileName to Array of tasks (this is a kind of convenience member, see buildTasksForFile)
+      @fileHash = Hash.new
 
       # configs
       @configs = Hash.new
@@ -1518,6 +1529,19 @@ module Makr
             raise "failed with all fallbacks in Build.build"
           end
         end
+      end
+    end
+
+
+    # this function is called with the name of a source file and builds all associated tasks and their dependencies
+    # (which typically amounts to the compilation of a single file)
+    def buildTasksForFile(fileName)
+      if not @fileHash[fileName]
+        raise "fileName not found in buildTasksForFile(fileName), maybe you added tasks without using Generators or" \
+              " the ones you used are not compliant"
+      end
+      @fileHash[fileName].each do |task|
+        build(task)
       end
     end
     
@@ -1772,13 +1796,20 @@ module Makr
   
   # Saves the Build to the ".makr"-subdir of the buildPath. 
   def Makr.saveBuild(build, cleanupConfigs)
+    # we exclude the fileHash from the saved data (as it is just convenience and we want to avoid a synchronization mess)
+    localFileHash = build.fileHash
+    build.fileHash = Hash.new
+    
     build.dumpConfigs(cleanupConfigs)
-    build.prepareDump() # exchanges task hashes
+    build.prepareDump() # exchanges task hashes so that upon load all that is now in taskHash is then in taskHashCache
     saveFileName = build.buildPath + "/.makr/build.ruby_marshal_dump"
     File.open(saveFileName, "wb") do |dumpFile|
       Marshal.dump(build, dumpFile)
     end
-    build.unprepareDump() # as the user may use the build after save, we exchange the task hashes again
+
+    # as the user may use the build after save, we restore everything
+    build.unprepareDump() 
+    build.fileHash = localFileHash
   end
 
 
@@ -1977,11 +2008,16 @@ module Makr
         @build.addTask(compileTaskName, CompileTask.new(fileName, @build, @configName))
       end
       localTask = @build.getTask(compileTaskName)
+      # care for changed configName when config is from cache
       if localTask.configName != @configName then
         Makr.log.warn( "configName has changed in task " + localTask.name + \
                        " compared to cached version, setting to new value: " + @configName)
         localTask.configName = @configName
       end
+      # now fill fileHash
+      @build.fileHash[fileName] = Array.new if not @build.fileHash[fileName]
+      @build.fileHash[fileName].push(localTask)
+      @build.fileHash[fileName].uniq!
       return [localTask]
     end
   end
@@ -2012,6 +2048,7 @@ module Makr
         @build.addTask(mocTaskName, mocTask)
       end
       mocTask = @build.getTask(mocTaskName)
+      # care for changed configName when config is from cache
       if mocTask.configName != @mocTaskConfigName then
         Makr.log.warn( "configName has changed in task " + mocTask.name + \
                        " compared to cached version, setting to new value: " + @mocTaskConfigName)
@@ -2025,12 +2062,17 @@ module Makr
         @build.addTask(compileTaskName, compileTask)
       end
       compileTask = @build.getTask(compileTaskName)
+      # care for changed configName when config is from cache
       if compileTask.configName != @compileTaskConfigName then
         Makr.log.warn( "configName has changed in task " + compileTask.name + \
                        " compared to cached version, setting to new value: " + @compileTaskConfigName)
         compileTask.configName = @compileTaskConfigName
       end
       tasks.push(compileTask)
+      # now fill fileHash
+      @build.fileHash[fileName] = Array.new if not @build.fileHash[fileName]
+      @build.fileHash[fileName].concat(tasks)
+      @build.fileHash[fileName].uniq!
       return tasks
     end
 
@@ -2055,7 +2097,7 @@ module Makr
       generatorArray.each do |gen|
         return tasks if UpdateTraverser.abortUpdate # cooperatively abort build
         genTasks = gen.generate(fileName)
-        tasks.concat(genTasks)
+        tasks.concat(genTasks)        
       end
     end
     return tasks
