@@ -11,7 +11,6 @@ TODO:
 Beispiele aufsplitten oder alle Möglichkeiten in einem großem Beispiel-Makrfile (oder beides ;-) )
 Unterprojekte möglichst abgetrennt
 Named arguments umsetzen?
-block-idiom (wie bei File.open) einsetzen, um build zu speichern bei exceptions etc?
 
 Datei zu ArrayOfTasks-Hash? ( convenient, z.B. zum umfassenden Build *einer* Datei über eine IDE wie eclipse mit allen relevanten Tasks
 

@@ -16,19 +16,21 @@ end
 
 
 if($target == "clean")
-  system("rm -f " + buildDir + "/*")
+  system("rm -f " + $buildDir + "/*")
 else
   # first get build
   build = Makr.loadBuild(Makr.cleanPathName($buildDir))
-  configure(build) #if $build.configs.empty?
 
-  allCPPFiles = Makr::FileCollector.collect($localDir + "/src/", "*.{cpp,cxx}", true)
-  tasks = Makr.applyGenerators(allCPPFiles, [Makr::CompileTaskGenerator.new(build, "CompileTask")])
+  # then use build block concept to ensure the build is saved
+  build.saveAfterBlock do
+    configure(build) #if $build.configs.empty?
 
-  myStaticLibTask = Makr.makeDynamicLib($buildDir + "/libtest.so.1.2.3", build, tasks, nil)
+    allCPPFiles = Makr::FileCollector.collect($localDir + "/src/", "*.{cpp,cxx}", true)
+    tasks = Makr.applyGenerators(allCPPFiles, [Makr::CompileTaskGenerator.new(build, "CompileTask")])
 
-  build.nrOfThreads = 2
-  build.build()
+    myStaticLibTask = Makr.makeDynamicLib($buildDir + "/libtest.so.1.2.3", build, tasks, nil)
 
-  Makr.saveBuild(build)
+    build.nrOfThreads = 2
+    build.build()
+  end
 end

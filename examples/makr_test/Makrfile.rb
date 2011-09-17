@@ -24,32 +24,34 @@ end
 
 
 if($target == "clean")
-  system("rm -f " + buildDir + "/*")
+  system("rm -f " + $buildDir + "/*")
 else
   # first get build
   build = Makr.loadBuild(Makr.cleanPathName($buildDir))
-  configure(build) #if $build.configs.empty?
 
-  allCPPFiles = Makr::FileCollector.collect($localDir + "/src/", "*.{cpp,cxx}", true)
-  tasks = Makr.applyGenerators(allCPPFiles, [Makr::CompileTaskGenerator.new(build, "CompileTask")])
-  allHeaderFiles = Makr::FileCollector.collect($localDir + "/src/", "*.{h}", true)
-  tasks.concat(Makr.applyGenerators(allHeaderFiles, [Makr::MocTaskGenerator.new(build, "CompileTask", "MocTask")]))
+  # then use build block concept to ensure the build is saved 
+  build.saveAfterBlock do
+    configure(build) #if $build.configs.empty?
 
-  myProgramTask = Makr.makeProgram($buildDir + "/myProgram", build, tasks, "CompileTask")
+    allCPPFiles = Makr::FileCollector.collect($localDir + "/src/", "*.{cpp,cxx}", true)
+    tasks = Makr.applyGenerators(allCPPFiles, [Makr::CompileTaskGenerator.new(build, "CompileTask")])
+    allHeaderFiles = Makr::FileCollector.collect($localDir + "/src/", "*.{h}", true)
+    tasks.concat(Makr.applyGenerators(allHeaderFiles, [Makr::MocTaskGenerator.new(build, "CompileTask", "MocTask")]))
+
+    myProgramTask = Makr.makeProgram($buildDir + "/myProgram", build, tasks, "CompileTask")
 
 
-  # set special options for a single task
-  compileTaskName = Makr::CompileTask.makeName($localDir + "/src/A.cpp")
-  if(build.hasTask?(compileTaskName)) then
-    task = build.getTask(compileTaskName)
-    specialConf = build.makeNewConfigForTask(compileTaskName + "_Conf", task)
-    if (not (specialConf["compiler.includePaths"]).include?(" -I/usr/include") ) then
-      specialConf["compiler.includePaths"] += " -I/usr/include"
+    # set special options for a single task
+    compileTaskName = Makr::CompileTask.makeName($localDir + "/src/A.cpp")
+    if(build.hasTask?(compileTaskName)) then
+      task = build.getTask(compileTaskName)
+      specialConf = build.makeNewConfigForTask(compileTaskName + "_Conf", task)
+      if (not (specialConf["compiler.includePaths"]).include?(" -I/usr/include") ) then
+        specialConf["compiler.includePaths"] += " -I/usr/include"
+      end
     end
+
+    #build.nrOfThreads = 2
+    build.build()
   end
-
-  #build.nrOfThreads = 2
-  build.build()
-
-  Makr.saveBuild(build)
 end

@@ -1482,6 +1482,13 @@ module Makr
     end
 
 
+    # provide a block concept to ensure automatic save after block is done (should embrace all actions in a Makrfile.rb)
+    def saveAfterBlock(cleanupConfigs = true)
+      yield
+      Makr.saveBuild(self, cleanupConfigs)
+    end
+    
+
     # central function for building a given task. If task is not given, the defaultTask is used
     # or if even that one is not set, a root tasks with no dependant tasks is searched and
     # constructed. If even that fails, an exception is thrown.
@@ -1764,7 +1771,7 @@ module Makr
 
   
   # Saves the Build to the ".makr"-subdir of the buildPath. 
-  def Makr.saveBuild(build, cleanupConfigs = true)
+  def Makr.saveBuild(build, cleanupConfigs)
     build.dumpConfigs(cleanupConfigs)
     build.prepareDump() # exchanges task hashes
     saveFileName = build.buildPath + "/.makr/build.ruby_marshal_dump"
