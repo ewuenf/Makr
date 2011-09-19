@@ -34,11 +34,11 @@ else
     configure(build) #if $build.configs.empty?
 
     allCPPFiles = Makr::FileCollector.collect($localDir + "/src/", "*.{cpp,cxx}", true)
-    tasks = Makr.applyGenerators(allCPPFiles, [Makr::CompileTaskGenerator.new(build, "CompileTask")])
+    tasks = Makr.applyGenerators(allCPPFiles, [Makr::CompileTaskGenerator.new(build, build.getConfig("CompileTask"))])
     allHeaderFiles = Makr::FileCollector.collect($localDir + "/src/", "*.{h}", true)
-    tasks.concat(Makr.applyGenerators(allHeaderFiles, [Makr::MocTaskGenerator.new(build, "CompileTask", "MocTask")]))
+    tasks.concat(Makr.applyGenerators(allHeaderFiles, [Makr::MocTaskGenerator.new(build, build.getConfig("CompileTask"), build.getConfig("MocTask"))]))
 
-    myProgramTask = Makr.makeProgram($buildDir + "/myProgram", build, tasks, "CompileTask")
+    myProgramTask = Makr.makeProgram($buildDir + "/myProgram", build, tasks, build.getConfig("CompileTask"))
 
 
     # set special options for a single task

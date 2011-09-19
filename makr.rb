@@ -312,50 +312,6 @@ module Makr
     end
 
 
-    # parses the Config from an array of strings (lines) starting from line lineIndex
-    # returns (Boolean,Integer,String) with the meaning:
-    # (parsing went well, last line visited, parent name)
-    def input(lines, lineIndex = 0)
-      foundStart = false
-      parentName = nil
-      for i in (lineIndex..(lines.size() - 1)) do
-        line = lines[i]      # get the current line from array,
-        line.strip!          # then remove any whitespace and
-        next if line.empty?  # ignore newlines
-        
-        # at first, we need to have a start marker (with the name of the Config)
-        if not foundStart then
-          if not line.index("start") then
-            Makr.log.error("Config parse error at line nr " + i.to_s)
-            return false, i, parentName
-          else
-            @name = line[("start ".length)..-1]
-            foundStart = true
-            next
-          end
-        end
-        # then we check for a parent
-        if line.index("parent") == 0 then
-          parentName = line["parent ".length..-1]
-          next
-        end
-        # if we find the end marker, we can return true (we dont care about the end matching @name)
-        if line.index("end") == 0 then
-          return true, i, parentName
-        end
-        # if none of the above match, we have a normal line and parse the key-value-pair and add it to the hash
-        splitArr = line.split("\"=\"")
-        if splitArr.size < 2 then
-          Makr.log.error("Config parse error at line nr " + i.to_s)
-          return false, i, parentName
-        end
-        @hash[(splitArr[0])[1..-1]] = (splitArr[-1])[0..-2] # skip the character " at the start and end
-      end
-      # gone through all lines, so we return, if start was found anyway and we expected end somewhere
-      return (not foundStart), i, parentName
-    end
-
-
   protected # comparable to private in C++
 
     def addChild(config)
@@ -408,26 +364,27 @@ module Makr
   
   
 
-  # Basic class and concept representing a node in the dependency tree and any type of action that
-  # needs to be performed (such as a versioning system update or somethink else). A possible configuration
-  # of the task is only referred to by name as I did not want linked data structures, that would be
-  # saved all together upon marshalling in class build. Config class is different.
+  # Basic class and concept representing a node in the dependency DAG and any type of action that
+  # needs to be performed (such as compilation of a source file). Each task can have a configuration
+  # attached (see class Config)
   class Task
 
     # dependencies are of course tasks this task depends on an additionally we have the array of
     # dependantTask that depend on this task (double-linked graph structure)
     attr_reader :name, :dependencies, :dependantTasks
-    # for reading and setting the Config name
-    attr_accessor :configName
+    # reference to Config object
+    attr_accessor :config
     # these are used by the multi-threaded UpdateTraverser
     attr_accessor :mutex, :updateMark, :dependenciesUpdatedCount, :dependencyWasUpdated
 
 
     # name must be unique within a build (see class Build)!
-    def initialize(name)
+    def initialize(name, config = nil)
       @name = name
       @dependencies = Array.new
       @dependantTasks = Array.new
+
+      @config = config
 
       # regarding the meaning of these see class UpdateTraverser
       @mutex = Mutex.new
@@ -668,29 +625,20 @@ module Makr
     # builds up the string used for calling the compiler out of the given Config (or default values),
     # the dependencies are not included (this is done in update)
     def makeCompilerCallString() # g++ is the general default value
-      if @configName then
-        Makr.log.debug("CompileTask " + @name + ": config name is: \"" + @configName + "\"")
-        config = @build.getConfig(@configName)
+      if @config then
+        Makr.log.debug("CompileTask " + @name + ": config name is: \"" + @config.name + "\"")
         callString = String.new
-        if (not config["compiler"]) then
+        if (not @config["compiler"]) then
           Makr.log.warn("CompileTask " + @name + ": no compiler given, using default g++")
           callString = "g++ "
         else
-          callString = config["compiler"] + " "
+          callString = @config["compiler"] + " "
         end
         # now add additionyl flags and options
-        if config["compiler.cFlags"] then
-          callString += config["compiler.cFlags"] + " "
-        end
-        if config["compiler.defines"] then
-          callString += config["compiler.defines"] + " "
-        end
-        if config["compiler.includePaths"] then
-          callString += config["compiler.includePaths"] + " "
-        end
-        if config["compiler.otherOptions"] then
-          callString += config["compiler.otherOptions"] + " "
-        end
+        callString += @config["compiler.cFlags"]       + " " if @config["compiler.cFlags"]
+        callString += @config["compiler.defines"]      + " " if @config["compiler.defines"]
+        callString += @config["compiler.includePaths"] + " " if @config["compiler.includePaths"]
+        callString += @config["compiler.otherOptions"] + " " if @config["compiler.otherOptions"]
         return callString
       else
         Makr.log.warn("CompileTask " + @name + ": no config given, using bare g++")
@@ -729,25 +677,24 @@ module Makr
 
 
     # arguments: fileName contains the file to be compiled, build references the Build object containing the tasks
-    # (including this one), configName is the name of the optional Config, fileIsGenerated specifies that
+    # (including this one), config is the optional Config, fileIsGenerated specifies that
     # the file to be compiled is generated (for example by the moc from Qt). If fileIsGenerated is true, the
     # last argument must contain the task that generates it to add a dependency.
-    # The options accepted in the Config referenced by configName could be "compiler", "compiler.cFlags", "compiler.defines"
+    # The options accepted in the Config referenced by config could be "compiler", "compiler.cFlags", "compiler.defines"
     # "compiler.includePaths", "compiler.otherOptions" (see also function makeCompilerCallString() )
-    def initialize(fileName, build, configName, fileIsGenerated = false, generatorTask = nil)
+    def initialize(fileName, build, config = nil, fileIsGenerated = false, generatorTask = nil)
       @fileName = Makr.cleanPathName(fileName)
       # now we need a unique name for this task. As we're defining a FileTask as dependency to fileName
       # and a FileTask on the @objectFileName to ensure a build of the target if it was deleted or
       # otherwise modified (whatever you can think of here), we need a unique name not related to these
-      super(CompileTask.makeName(@fileName))
+      super(CompileTask.makeName(@fileName), config)
       @build = build
-      @configName = configName
 
       # first construct a dependency on the file itself, if it isnt generated
       # (we dont add dependencies yet, as they get added upon automatic dependency generation in
       # the function buildDependencies())
       @fileIsGenerated = fileIsGenerated
-      @generatorTask = generatorTask
+      @generatorTaskDep = generatorTask
       if not @fileIsGenerated then
         if not @build.hasTask?(@fileName) then
           @compileFileDep = FileTask.new(@fileName)
@@ -760,19 +707,19 @@ module Makr
       # construct a dependency task on the target object file
       @objectFileName = makeObjectFileName(fileName)
       if not @build.hasTask?(@objectFileName) then
-        @compileTarget = FileTask.new(@objectFileName, false)
-        @build.addTask(@objectFileName, @compileTarget)
+        @compileTargetDep = FileTask.new(@objectFileName, false)
+        @build.addTask(@objectFileName, @compileTargetDep)
       else
-        @compileTarget = @build.getTask(@objectFileName)
+        @compileTargetDep = @build.getTask(@objectFileName)
       end
 
       # construct a dependency task on the configuration
-      @configTaskName = ConfigTask.makeName(@name)
-      if not @build.hasTask?(@configTaskName) then
-        @configTask = ConfigTask.new(@configTaskName)
-        @build.addTask(@configTaskName, @configTask)
+      @configTaskDepName = ConfigTask.makeName(@name)
+      if not @build.hasTask?(@configTaskDepName) then
+        @configTaskDep = ConfigTask.new(@configTaskDepName)
+        @build.addTask(@configTaskDepName, @configTaskDep)
       else
-        @configTask = @build.getTask(@configTaskName)
+        @configTaskDep = @build.getTask(@configTaskDepName)
       end
 
       # the following first deletes all deps and then constructs them including tasks constructed above
@@ -840,9 +787,9 @@ module Makr
       end
       # now we also add the constructed dependencies again as we cleared all deps in the beginning
       addDependency(@compileFileDep) if not @fileIsGenerated
-      addDependency(@compileTarget)
-      addDependency(@configTask)
-      addDependency(@generatorTask) if @fileIsGenerated
+      addDependency(@compileTargetDep)
+      addDependency(@configTaskDep)
+      addDependency(@generatorTaskDep) if @fileIsGenerated
     end
 
 
@@ -862,8 +809,8 @@ module Makr
         Makr.abortBuild()
         return false
       end
-      return @compileTarget.update() # we call this to update file information on the compiled target
-        # additionally this return true, if the target was changed, and false otherwise what is what
+      return @compileTargetDep.update() # we call this to update file information on the compiled target
+        # additionally this returns true, if the target was changed, and false otherwise what is what
         # we want to propagate
     end
 
@@ -914,18 +861,15 @@ module Makr
     # constructing the string to call the moc out of the given config (or default values)
     def makeMocCallString()
       callString = String.new
-      if @configName then
-        Makr.log.debug("MocTask " + @name + ": config name is: \"" + @configName + "\"")
-        config = @build.getConfig(@configName)
-        if (not config["moc"]) then
+      if @config then
+        Makr.log.debug("MocTask " + @name + ": config name is: \"" + @config.name + "\"")
+        if (not @config["moc"]) then
           Makr.log.warn("MocTask " + @name + ": no moc binary given, using moc in path")
           callString = "moc "
         else
-          callString = config["moc"] + " "
+          callString = @config["moc"] + " "
         end
-        if config["moc.flags"] then
-          callString += config["moc.flags"] + " "
-        end
+        callString += @config["moc.flags"] + " " if @config["moc.flags"] # add other options
       else
         Makr.log.warn("MocTask " + @name + ": no config given, using default bare moc")
         callString = "moc "
@@ -941,25 +885,23 @@ module Makr
       prefix = "" # default is no prefix to allow sort by name in file manager
       suffix = ".moc_gen.cpp"
       # check if user supplied other values via config
-      if @configName then
-        config = @build.getConfig(@configName)
-        prefix = config["moc.filePrefix"] if (config["moc.filePrefix"])
-        suffix = config["moc.fileSuffix"] if (config["moc.fileSuffix"])
+      if @config then
+        prefix = @config["moc.filePrefix"] if (@config["moc.filePrefix"])
+        suffix = @config["moc.fileSuffix"] if (@config["moc.fileSuffix"])
       end
       @build.buildPath + "/" + prefix + fileName.gsub('/', '_').gsub('.', '_') + suffix
     end
 
 
-    # The options accepted in the Config referenced by configName could be "moc" and "moc.flags"
+    # The options accepted in the Config referenced by config could be "moc" and "moc.flags"
     # (see also function makeMocCallString() )
-    def initialize(fileName, build, configName)
+    def initialize(fileName, build, config = nil)
       @fileName = Makr.cleanPathName(fileName)
       # now we need a unique name for this task. As we're defining a FileTask as dependency to @fileName
       # and a FileTask on the @mocFileName to ensure a build of the target if it was deleted or
       # otherwise modified (whatever you can think of here), we need a unique name not related to these
-      super(MocTask.makeName(@fileName))
+      super(MocTask.makeName(@fileName), config)
       @build = build
-      @configName = configName
       @mocFileName = makeMocFileName()
 
       # first we need a dep on the input file
@@ -1001,9 +943,9 @@ module Makr
         Makr.log.fatal("moc error, exiting build process\n\n\n")
         Makr.abortBuild()
       end
-      @mocTargetDep.update() # we call this to update file information on the compiled target
-      return true # right now, we are always true (we could check for target equivalence or something else
-                  # and then return false in case the target didnt change (based on file hash))
+      return @mocTargetDep.update() # we call this to update file information on the compiled target
+        # additionally this returns true, if the target was changed, and false otherwise what is what
+        # we want to propagate
     end
 
 
@@ -1052,10 +994,10 @@ module Makr
     def checkDependencyTasksForPIC()
       @dependencies.each do |dep|
         if dep.kind_of?(CompileTask) then
-          raise "[makr] DynamicLibTask wants configName in dependency CompileTask" + dep.name + "!" if not dep.configName
-          config = @build.getConfig(dep.configName)
-          if (not (config["compiler.cFlags"].include?("-fPIC") or config["compiler.cFlags"].include?("-fpic"))) then
-            raise "[makr] DynamicLibTask wants -fPIC or -fpic in config[\"compiler.cFlags\"] of dependency CompileTasks!"
+          raise "[makr] DynamicLibTask wants configName in dependency CompileTask" + dep.name + "!" if not dep.config
+          if (not (dep.config["compiler.cFlags"].include?("-fPIC") or dep.config["compiler.cFlags"].include?("-fpic"))) then
+            raise( "[makr] DynamicLibTask wants -fPIC or -fpic in config[\"compiler.cFlags\"] of dependency CompileTasks!" + \
+                    " error occured in CompileTask " + dep.name)
           end
         end
       end
@@ -1064,29 +1006,20 @@ module Makr
 
     
     def makeLinkerCallString() # g++ is always default value
-      if @configName then
-        Makr.log.debug("config name is: \"" + @configName + "\"")
-        config = @build.getConfig(@configName)
+      if @config then
+        Makr.log.debug("DynamicLibTask " + @name + ": config name is: \"" + @config.name + "\"")
         callString = String.new
-        if (not config["linker"]) then
+        if (not @config["linker"]) then
           Makr.log.warn("no linker command given, using default g++")
           callString = "g++ "
         else
-          callString = config["linker"] + " "
+          callString = @config["linker"] + " "
         end
         # now add other flags and options
-        if config["linker.lFlags"] then
-          callString += config["linker.lFlags"] + " "
-        end
-        if config["linker.libPaths"] then
-          callString += config["linker.libPaths"] + " "
-        end
-        if config["linker.libs"] then
-          callString += config["linker.libs"] + " "
-        end
-        if config["linker.otherOptions"] then
-          callString += config["linker.otherOptions"] + " "
-        end
+        callString += @config["linker.lFlags"]       + " " if @config["linker.lFlags"]
+        callString += @config["linker.libPaths"]     + " " if @config["linker.libPaths"]
+        callString += @config["linker.libs"]         + " " if @config["linker.libs"]
+        callString += @config["linker.otherOptions"] + " " if @config["linker.otherOptions"]
         # add mandatory "-shared" etc if necessary
         callString += " -shared " if not callString.include?("-shared")
         callString += (" -Wl,-soname," + @libName) if not callString.include?("-soname")
@@ -1102,34 +1035,33 @@ module Makr
 
     # libFileName should be the complete path (absolute or relative) of the library with all standard fuss, like
     # "build/libxy.so.1.2.3"
-    # (if you want a different soname for the lib, pass it as option with the config identified by configName,
+    # (if you want a different soname for the lib, pass it as option with the config,
     # for example like this: config["linker.otherOptions"]=" -Wl,-soname,libSpecialName.so.1")
-    # The options accepted in the Config referenced by configName could be "linker", "linker.lFlags",
+    # The options accepted in the config could be "linker", "linker.lFlags",
     # "linker.libs" and "linker.otherOptions" (see also function makeLinkerCallString() ).
-    def initialize(libFileName, build, configName)
+    def initialize(libFileName, build, config = nil)
       @libFileName = Makr.cleanPathName(libFileName)
       @libName = File.basename(@libFileName)
-      super(DynamicLibTask.makeName(@libFileName))
+      super(DynamicLibTask.makeName(@libFileName), config)
       @build = build
-      @configName = configName
 
       # we need a dep on the lib target
       if not @build.hasTask?(@libFileName) then
-        @targetFileTask = FileTask.new(@libFileName, false)
-        @build.addTask(@libFileName, @targetFileTask)
+        @libTargetDep = FileTask.new(@libFileName, false)
+        @build.addTask(@libFileName, @libTargetDep)
       else
-        @targetFileTask = @build.getTask(@libFileName)
+        @libTargetDep = @build.getTask(@libFileName)
       end
-      addDependency(@targetFileTask)
+      addDependency(@libTargetDep)
       # now add another dependency task on the config
-      @configTaskName = ConfigTask.makeName(@libFileName)
-      if not @build.hasTask?(@configTaskName) then
-        @configTask = ConfigTask.new(@configTaskName)
-        @build.addTask(@configTaskName, @configTask)
+      @configDepName = ConfigTask.makeName(@libFileName)
+      if not @build.hasTask?(@configDepName) then
+        @configDep = ConfigTask.new(@configDepName)
+        @build.addTask(@configDepName, @configDep)
       else
-        @configTask = @build.getTask(@configTaskName)
+        @configDep = @build.getTask(@configDepName)
       end
-      addDependency(@configTask)
+      addDependency(@configDep)
 
       Makr.log.debug("made DynamicLibTask with @name=\"" + @name + "\"")
     end
@@ -1152,8 +1084,9 @@ module Makr
         Makr.log.fatal("linker error, exiting build process\n\n\n")
         Makr.abortBuild()
       end
-      @targetFileTask.update() # we call this to update file information on the compiled target
-      return true # we could check here for target change like proposed in CompileTask.update
+      return @libTargetDep.update() # we call this to update file information on the compiled target
+        # additionally this returns true, if the target was changed, and false otherwise what is what
+        # we want to propagate
     end
 
 
@@ -1216,19 +1149,19 @@ module Makr
 
 
     def makeLinkerCallString() # "ar rcs" is default value
-      if @configName then
-        Makr.log.debug("config name is: \"" + @configName + "\"")
-        config = @build.getConfig(@configName)
+      if @config then
+        Makr.log.debug("StaticLibTask " + @name + ": config name is: \"" + @config.name + "\"")
+        @config = @build.getConfig(@@configName)
         callString = String.new
-        if (not config["linker"]) then
+        if (not @config["linker"]) then
           Makr.log.warn("no linker command given, using default ar")
           callString = "ar rcs "
         else
-          callString = config["linker"] + " "
+          callString = @config["linker"] + " "
         end
         return callString
       else
-        Makr.log.warn("no config given, using bare linker ar")
+        Makr.log.warn("no @config given, using bare linker ar")
         return "ar rcs "
       end
     end
@@ -1237,13 +1170,12 @@ module Makr
 
 
     # libFileName should be the complete path (absolute or relative) of the library with all standard fuss, like "build/libxy.a".
-    # Giving a config is typically unnecessary.
-    def initialize(libFileName, build, configName)
+    # Specifying a config is typically unnecessary, the only entry respected is config["linker"].
+    def initialize(libFileName, build, config)
       @libFileName = Makr.cleanPathName(libFileName)
       @libName = File.basename(@libFileName)
-      super(StaticLibTask.makeName(@libFileName))
+      super(StaticLibTask.makeName(@libFileName), config)
       @build = build
-      @configName = configName
 
       # first we need a dependency on the target
       if not @build.hasTask?(@libFileName) then
@@ -1254,14 +1186,14 @@ module Makr
       end
       addDependency(@targetDep)
       # now add another dependency task on the config
-      @configTaskName = ConfigTask.makeName(@libFileName)
-      if not @build.hasTask?(@configTaskName) then
-        @configTask = ConfigTask.new(@configTaskName)
-        @build.addTask(@configTaskName, @configTask)
+      @configDepName = ConfigTask.makeName(@libFileName)
+      if not @build.hasTask?(@configDepName) then
+        @configDep = ConfigTask.new(@configDepName)
+        @build.addTask(@configDepName, @configDep)
       else
-        @configTask = @build.getTask(@configTaskName)
+        @configDep = @build.getTask(@configDepName)
       end
-      addDependency(@configTask)
+      addDependency(@configDep)
 
       Makr.log.debug("made StaticLibTask with @name=\"" + @name + "\"")
     end
@@ -1282,8 +1214,9 @@ module Makr
         Makr.log.fatal("linker error, exiting build process\n\n\n")
         Makr.abortBuild()
       end
-      @targetDep.update() # we call this to update file information on the compiled target
-      return true # we could check here for target change like proposed in CompileTask.update
+      return @targetDep.update() # we call this to update file information on the compiled target
+        # additionally this returns true, if the target was changed, and false otherwise what is what
+        # we want to propagate
     end
 
 
@@ -1342,29 +1275,20 @@ module Makr
 
 
     def makeLinkerCallString() # g++ is always default value
-      if @configName then
-        Makr.log.debug("config name is: \"" + @configName + "\"")
-        config = @build.getConfig(@configName)
+      if @config then
+        Makr.log.debug("ProgramTask " + @name + ": config name is: \"" + @config.name + "\"")
         callString = String.new
-        if (not config["linker"]) then
+        if (not @config["linker"]) then
           Makr.log.warn("no linker command given, using default g++")
           callString = "g++ "
         else
-          callString = config["linker"] + " "
+          callString = @config["linker"] + " "
         end
         # now add other flags and options
-        if config["linker.lFlags"] then
-          callString += config["linker.lFlags"] + " "
-        end
-        if config["linker.libPaths"] then
-          callString += config["linker.libPaths"] + " "
-        end
-        if config["linker.libs"] then
-          callString += config["linker.libs"] + " "
-        end
-        if config["linker.otherOptions"] then
-          callString += config["linker.otherOptions"] + " "
-        end
+        callString += @config["linker.lFlags"]       + " " if @config["linker.lFlags"]
+        callString += @config["linker.libPaths"]     + " " if @config["linker.libPaths"]
+        callString += @config["linker.libs"]         + " " if @config["linker.libs"]
+        callString += @config["linker.otherOptions"] + " " if @config["linker.otherOptions"]
         return callString
       else
         Makr.log.warn("no config given, using bare linker g++")
@@ -1375,31 +1299,30 @@ module Makr
     alias :getConfigString :makeLinkerCallString
 
     
-    # The options accepted in the Config referenced by configName could be "linker", "linker.lFlags",
+    # The options accepted in the config could be "linker", "linker.lFlags",
     # "linker.libs" and "linker.otherOptions" (see also function makeLinkerCallString() ).
-    def initialize(programName, build, configName)
+    def initialize(programName, build, config)
       @programName = Makr.cleanPathName(programName)
-      super(ProgramTask.makeName(@programName))
+      super(ProgramTask.makeName(@programName), config)
       @build = build
-      @configName = configName
 
       # first we make dependency on the target program file
       if not @build.hasTask?(@programName) then
-        @compileTarget = FileTask.new(@programName, false)
-        @build.addTask(@programName, @compileTarget)
+        @targetDep = FileTask.new(@programName, false)
+        @build.addTask(@programName, @targetDep)
       else
-        @compileTarget = @build.getTask(@programName)
+        @targetDep = @build.getTask(@programName)
       end
-      addDependency(@compileTarget)
+      addDependency(@targetDep)
       # now add another dependency task on the config
-      @configTaskName = ConfigTask.makeName(@programName)
-      if not @build.hasTask?(@configTaskName) then
-        @configTask = ConfigTask.new(@configTaskName)
-        @build.addTask(@configTaskName, @configTask)
+      @configDepName = ConfigTask.makeName(@programName)
+      if not @build.hasTask?(@configDepName) then
+        @configDep = ConfigTask.new(@configDepName)
+        @build.addTask(@configDepName, @configDep)
       else
-        @configTask = @build.getTask(@configTaskName)
+        @configDep = @build.getTask(@configDepName)
       end
-      addDependency(@configTask)
+      addDependency(@configDep)
 
       Makr.log.debug("made ProgramTask with @name=\"" + @name + "\"")
     end
@@ -1420,8 +1343,9 @@ module Makr
         Makr.log.fatal("linker error, exiting build process\n\n\n")
         Makr.abortBuild()
       end
-      @compileTarget.update() # we call this to update file information on the compiled target
-      return true # we could check here for target change like proposed in CompileTask.update
+      return @targetDep.update() # we call this to update file information on the compiled target
+        # additionally this returns true, if the target was changed, and false otherwise what is what
+        # we want to propagate
     end
 
     
@@ -1483,10 +1407,7 @@ module Makr
       # hash  from fileName to Array of tasks (this is a kind of convenience member, see buildTasksForFile)
       @fileHash = Hash.new
 
-      # configs
       @configs = Hash.new
-      @configsFileName = @buildPath + "/.makr/config.txt"
-      @configsFileName.freeze
 
       @defaultTask = nil
       @nrOfThreads = nil
@@ -1619,70 +1540,19 @@ module Makr
 
 
     def makeNewConfigForTask(name, task)
-      if task.configName == name then # already have this config
-        return getConfig(name)
+      if hasConfig?(name) then # already have this config
+        config = getConfig(name)
+      else
+        parentName = task.config.name if task.config
+        config = makeNewConfig(name, parentName)
       end
-      newConf = makeNewConfig(name, task.configName)
-      task.configName = name
-      return newConf
+      return task.config = config
     end
 
 
     # dump helper functions
 
     
-    def loadConfigs()  # loads configs from build dir
-      if File.file?(@configsFileName) then
-        Makr.log.info("found config file, now restoring")
-        lines = IO.readlines(@configsFileName)
-        lineIndex = 0
-        while lineIndex < lines.size() do
-          if (not (lines[lineIndex])) or (lines[lineIndex] == "") then
-            lineIndex += 1
-            next
-          end
-          config = Config.new("")
-          parsingGood, lineIndex, parentName = config.input(lines, lineIndex)
-          if parsingGood then
-            lineIndex += 1 # go on to next line
-            # check name for existence first (this is not an error)
-            if @configs.has_key?(config.name) then
-              Makr.log.error("already having config parsed before line " + lineIndex.to_s)
-              next
-            end
-            if parentName then
-              if not @configs.has_key?(parentName) then
-                Makr.log.error("parent name unknown in config file before lineIndex: " + lineIndex.to_s)
-                return
-              end
-              config.setParent(@configs[parentName])
-            end
-            if config.name != "" then  # we only add configs with a name!
-              @configs[config.name] = config
-            end
-          else
-            Makr.log.error("parse error in config file before lineIndex: " + lineIndex.to_s)
-            return
-          end
-        end
-      else
-        Makr.log.info("could not find or open config file.")
-      end
-    end
-
-
-    def dumpConfigs(cleanupConfigs)
-      if cleanupConfigs then
-        cleanConfigs()
-      end
-      File.open(@configsFileName, "w") do |dumpFile|
-        @configs.each do |key, value|
-          value.output(dumpFile)
-        end
-      end
-    end
-
-
     def cleanTaskHashCache()
       # remove tasks that want to be deleted and their
       deleteArr = Array.new
@@ -1699,7 +1569,36 @@ module Makr
         task.cleanupBeforeDeletion()
       end
     end
-  
+
+    
+    def cleanConfigs()
+      saveHash = Hash.new
+      @taskHash.each do |key, value|
+        if value.config and not (saveHash.has_key?(value.config.name)) then # save each config once
+          saveHash[value.config.name] = @configs[value.config.name]
+          @configs.delete(value.config.name)
+        end
+      end
+      # now only Config instance remain in @configs, that have no reference in tasks.
+      # we could delete them all, but some are intermediate nodes in the Config graph
+      # thus we only delete those, that have no childs recursively
+      deletedSomething = true
+      while deletedSomething
+        deletedSomething = false
+        @configs.delete_if do |name, config|
+          if config.childs.empty? then
+            config.unparent()
+            deletedSomething = true
+          else
+            false
+          end
+        end
+      end
+      saveHash.each do |key, value|
+        @configs[key] = value
+      end
+    end
+
 
     def prepareDump()
       @taskHashCache.replace(@taskHash)
@@ -1732,36 +1631,7 @@ module Makr
         addArr.concat(curTask.dependencies.clone)
       end
     end
-
     
-    def cleanConfigs()
-      saveHash = Hash.new
-      @taskHash.each do |key, value|
-        if value.configName and not (saveHash.has_key?(value.configName)) then # save each config once
-          saveHash[value.configName] = @configs[value.configName]
-          @configs.delete(value.configName)
-        end
-      end
-      # now only Config instance remain in @configs, that have no reference in tasks.
-      # we could delete them all, but some are intermediate nodes in the Config graph
-      # thus we only delete those, that have no childs recursively
-      deletedSomething = true
-      while deletedSomething
-        deletedSomething = false
-        @configs.delete_if do |name, config|
-          if config.childs.empty? then
-            config.unparent()
-            deletedSomething = true
-          else
-            false
-          end
-        end
-      end
-      saveHash.each do |key, value|
-        @configs[key] = value
-      end
-    end
-
   end
 
 
@@ -1787,7 +1657,6 @@ module Makr
     Makr.log.info("found build dump file, now restoring")
     File.open(buildPathBuildDumpFileName, "rb") do |dumpFile|
       build = Marshal.load(dumpFile)
-      build.loadConfigs()
       build.cleanTaskHashCache()
       return build
     end
@@ -1795,12 +1664,12 @@ module Makr
 
   
   # Saves the Build to the ".makr"-subdir of the buildPath. 
-  def Makr.saveBuild(build, cleanupConfigs)
+  def Makr.saveBuild(build, cleanupConfigs = true)
     # we exclude the fileHash from the saved data (as it is just convenience and we want to avoid a synchronization mess)
     localFileHash = build.fileHash
     build.fileHash = Hash.new
     
-    build.dumpConfigs(cleanupConfigs)
+    build.cleanConfigs() if cleanupConfigs
     build.prepareDump() # exchanges task hashes so that upon load all that is now in taskHash is then in taskHashCache
     saveFileName = build.buildPath + "/.makr/build.ruby_marshal_dump"
     File.open(saveFileName, "wb") do |dumpFile|
@@ -1992,12 +1861,12 @@ module Makr
 
   
 
-  # Produces a CompileTask for every fileName given, if it does not exist. All CompileTask objects get the configName given.
+  # Produces a CompileTask for every fileName given, if it does not exist. All CompileTask objects get the config given.
   class CompileTaskGenerator
 
-    def initialize(build, configName = nil)
+    def initialize(build, config = nil)
       @build = build
-      @configName = configName
+      @config = config
     end
 
 
@@ -2005,14 +1874,14 @@ module Makr
       Makr.cleanPathName(fileName)
       compileTaskName = CompileTask.makeName(fileName)
       if not @build.hasTask?(compileTaskName) then
-        @build.addTask(compileTaskName, CompileTask.new(fileName, @build, @configName))
+        @build.addTask(compileTaskName, CompileTask.new(fileName, @build, @config))
       end
       localTask = @build.getTask(compileTaskName)
       # care for changed configName when config is from cache
-      if localTask.configName != @configName then
-        Makr.log.warn( "configName has changed in task " + localTask.name + \
-                       " compared to cached version, setting to new value: " + @configName)
-        localTask.configName = @configName
+      if localTask.config != @config then
+        Makr.log.debug( "config has changed in task " + localTask.name + \
+                       " compared to cached version, setting to new value: " + @config.name)
+        localTask.config = @config
       end
       # now fill fileHash
       @build.fileHash[fileName] = Array.new if not @build.fileHash[fileName]
@@ -2029,10 +1898,10 @@ module Makr
   # All CompileTask objects get the compileTaskConfigName if given, all MocTasks get the mocTaskConfigName.
   class MocTaskGenerator
 
-    def initialize(build, compileTaskConfigName = nil, mocTaskConfigName = nil)
+    def initialize(build, compileTaskConfig = nil, mocTaskConfig = nil)
       @build = build
-      @mocTaskConfigName = mocTaskConfigName
-      @compileTaskConfigName = compileTaskConfigName
+      @mocTaskConfig = mocTaskConfig
+      @compileTaskConfig = compileTaskConfig
     end
 
 
@@ -2044,29 +1913,29 @@ module Makr
       Makr.cleanPathName(fileName)
       mocTaskName = MocTask.makeName(fileName)
       if not @build.hasTask?(mocTaskName) then
-        mocTask = MocTask.new(fileName, @build, @mocTaskConfigName)
+        mocTask = MocTask.new(fileName, @build, @mocTaskConfig)
         @build.addTask(mocTaskName, mocTask)
       end
       mocTask = @build.getTask(mocTaskName)
       # care for changed configName when config is from cache
-      if mocTask.configName != @mocTaskConfigName then
-        Makr.log.warn( "configName has changed in task " + mocTask.name + \
-                       " compared to cached version, setting to new value: " + @mocTaskConfigName)
-        mocTask.configName = @mocTaskConfigName
+      if mocTask.config != @mocTaskConfig then
+        Makr.log.debug( "configName has changed in task " + mocTask.name + \
+                       " compared to cached version, setting to new value: " + @mocTaskConfig.name)
+        mocTask.config = @mocTaskConfig
       end
       tasks = [mocTask]
       # TODO make common code with CompileTaskGenerator for the following
       compileTaskName = CompileTask.makeName(mocTask.mocFileName)
       if not @build.hasTask?(compileTaskName) then
-        compileTask = CompileTask.new(mocTask.mocFileName, @build, @compileTaskConfigName, true, mocTask)
+        compileTask = CompileTask.new(mocTask.mocFileName, @build, @compileTaskConfig, true, mocTask)
         @build.addTask(compileTaskName, compileTask)
       end
       compileTask = @build.getTask(compileTaskName)
       # care for changed configName when config is from cache
-      if compileTask.configName != @compileTaskConfigName then
-        Makr.log.warn( "configName has changed in task " + compileTask.name + \
-                       " compared to cached version, setting to new value: " + @compileTaskConfigName)
-        compileTask.configName = @compileTaskConfigName
+      if compileTask.config != @compileTaskConfig then
+        Makr.log.debug( "configName has changed in task " + compileTask.name + \
+                       " compared to cached version, setting to new value: " + @compileTaskConfig)
+        compileTask.config = @compileTaskConfig
       end
       tasks.push(compileTask)
       # now fill fileHash
@@ -2212,7 +2081,7 @@ Makr.log.level = Logger::DEBUG
 Makr.log.formatter = proc { |severity, datetime, progname, msg|
     "[makr #{severity} #{datetime}]    #{msg}\n"
 }
-Makr.log << "\n\nmakr version 2011.09.14\n\n"  # just give short version notice on every startup (Date-encoded)
+Makr.log << "\n\nmakr version 2011.09.19\n\n"  # just give short version notice on every startup (Date-encoded)
 
 # then set the signal handler to allow cooperative aborting of the build process on SIGUSR1
 Signal.trap("USR1")  do
@@ -2225,3 +2094,16 @@ end
 Makr.pushArgs(Makr::ScriptArguments.new("./Makrfile.rb", ARGV))
 # then we reuse the makeDir functionality building the current directory
 Makr.makeDir(".")
+
+
+
+
+
+
+
+
+
+
+
+
+

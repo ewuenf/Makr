@@ -26,7 +26,7 @@ else
     configure(build) #if $build.configs.empty?
 
     allCPPFiles = Makr::FileCollector.collect($localDir + "/src/", "*.{cpp,cxx}", true)
-    tasks = Makr.applyGenerators(allCPPFiles, [Makr::CompileTaskGenerator.new(build, "CompileTask")])
+    tasks = Makr.applyGenerators(allCPPFiles, [Makr::CompileTaskGenerator.new(build, build.getConfig("CompileTask"))])
 
     myStaticLibTask = Makr.makeDynamicLib($buildDir + "/libtest.so.1.2.3", build, tasks, nil)
 
