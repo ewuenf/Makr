@@ -504,6 +504,7 @@ module Makr
 
 
     attr_reader :fileName, :time, :size, :fileHash, :missingFileIsError
+    attr_accessor :useFileHash # for setting hash usage individually, overrides class variable
 
     
     # the boolean argument missingFileIsError can be used to indicate, if an update is necessary, if file is missing 
@@ -516,6 +517,7 @@ module Makr
       # all file attribs stay uninitialized, so that first call to update returns true
       @time = @size = @fileHash = String.new
       @missingFileIsError = missingFileIsError
+      @useFileHash = nil
       Makr.log.debug("made file task with @fileName=\"" + @fileName + "\"")
     end
 
@@ -538,9 +540,14 @@ module Makr
         Makr.log.info("file " + @fileName + " is missing, so update() in FileTask is true.")
         return true
       end
-      # now we either use the hash of the file or we use file attributes to determine changes
       retValue = false
-      if @@useFileHash then # file hash
+      # now we either use the hash of the file or we use file attributes to determine changes
+      if @useFileHash then # the local variable overrides class variable if set
+        useFileHash = @useFileHash
+      else
+        useFileHash = @@useFileHash
+      end
+      if useFileHash then # file hash
         curHash = MD5.new(open(@fileName, 'rb').read).hexdigest
         if(@fileHash != curHash)
           @fileHash = curHash
