@@ -10,5 +10,3 @@ TODO:
 
 Beispiele aufsplitten oder alle Möglichkeiten in einem großem Beispiel-Makrfile (oder beides ;-) )
 Unterprojekte möglichst abgetrennt und testen!!
-
-[Named arguments umsetzen?]

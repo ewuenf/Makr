@@ -1522,6 +1522,12 @@ module Makr
       return @configs.has_key?(name)
     end
 
+
+    def addConfig(config)
+      Makr.log.warn("Overwriting config with name " + config.name) if hasConfig?(config.name)
+      @configs[config.name] = config
+    end
+
     
     def getConfig(name)
       if not hasConfig?(name) then
@@ -2050,7 +2056,9 @@ module Makr
   # loads a Makrfile.rb from the given dir and executes it using Kernel.load and push/pops the current ScriptArguments, so that they are save
   def Makr.makeDir(dir)
     Makr.cleanPathName(dir)
-    makrFilePath = dir + "/Makrfile.rb"
+    oldDir = Dir.pwd
+    Dir.chdir(dir)
+    makrFilePath = "./Makrfile.rb"
     if File.exist?(makrFilePath) then
       Makr.pushArgs(Makr::ScriptArguments.new(makrFilePath, getArgs().arguments.clone))
       Kernel.load(makrFilePath)
@@ -2059,6 +2067,7 @@ module Makr
       Makr.log.error("Subdir build call with " + makrFilePath + ", file not found!")
       Makr.abortBuild()
     end
+    Dir.chdir(oldDir)
   end
 
 
