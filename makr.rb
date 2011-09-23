@@ -2073,7 +2073,7 @@ module Makr
       Kernel.load(makrFilePath)
       popArgs()
     else
-      Makr.log.error("Subdir build call with " + makrFilePath + ", file not found!")
+      Makr.log.error("Cannot find Makrfile-Path " + makrFilePath + " from current working dir " + Dir.pwd + "!")
       Makr.abortBuild()
     end
     Dir.chdir(oldDir)
