@@ -1440,7 +1440,6 @@ module Makr
       updateTraverser = UpdateTraverser.new(@nrOfThreads)
       if task then
         updateTraverser.traverse(task)
-        return
       else
         # check default task or search for a single task without dependant tasks (but give warning)
         if @defaultTask.kind_of? Task then
@@ -1457,6 +1456,12 @@ module Makr
             raise "failed with all fallbacks in Build.build"
           end
         end
+      end
+      # finally give message:
+      if not UpdateTraverser.abortUpdate
+        Makr.log.info("\n")
+        Makr.log.info("\n")
+        Makr.log.info("############ successfully build task ############")
       end
     end
 
