@@ -335,14 +335,23 @@ module Makr
   # options related to a lib using pkg-config.
   class PkgConfig
   
+    # cflags to config
     def PkgConfig.addCFlags(config, pkgName)
       config.addUnique("compiler.cFlags", " " + (`pkg-config --cflags #{pkgName}`).strip!)
     end
     
     
+    # add libs to config
     def PkgConfig.addLibs(config, pkgName, static = false)
       command = "pkg-config --libs " + ((static)? " --static ":"") + pkgName
       config.addUnique("linker.lFlags", " " + (`#{command}`).strip!)
+    end
+
+
+    # add libs and cflags to config
+    def PkgConfig.add(config, pkgName)
+      PkgConfig.addCFlags(config, pkgName)
+      PkgConfig.addLibs(config, pkgName)
     end
 
     
