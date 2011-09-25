@@ -80,7 +80,11 @@ module Makr
       @executors = []
       @queue = []
       @queue_limit = queue_limit
-      @count = (count)?count:`grep -c processor /proc/cpuinfo`.to_i  # TODO works only on linux (and maybe most unixes)
+      if count then
+        @count = count
+      else
+        @count = `grep -c processor /proc/cpuinfo`.to_i  # works only on linux (and maybe most unixes)
+      end
       @count.times { @executors << Executor.new(@queue, @mutex) }
     end
 
@@ -122,7 +126,7 @@ module Makr
     def join
       while (not (@queue.empty? and @executors.all?{|e| !e.active}))
         sleep 0.01
-      end      
+      end
     end
 
   protected
@@ -316,47 +320,6 @@ module Makr
 
 
   end
-
-
-
-
-
-
-  # Convenience class related to Config adding compiler flags (Config key "compiler.cFlags") and
-  # options related to a lib using pkg-config.
-  class PkgConfig
-
-    # cflags to config
-    def PkgConfig.addCFlags(config, pkgName)
-      config.addUnique("compiler.cFlags", " " + (`pkg-config --cflags #{pkgName}`).strip!)
-    end
-
-
-    # add libs to config
-    def PkgConfig.addLibs(config, pkgName, static = false)
-      command = "pkg-config --libs " + ((static)? " --static ":"") + pkgName
-      config.addUnique("linker.lFlags", " " + (`#{command}`).strip!)
-    end
-
-
-    # add libs and cflags to config
-    def PkgConfig.add(config, pkgName)
-      PkgConfig.addCFlags(config, pkgName)
-      PkgConfig.addLibs(config, pkgName)
-    end
-
-
-    def PkgConfig.getAllLibs()
-      list = `pkg-config --list-all`
-      hash = Hash.new
-      list.each_line do |line|
-        splitArr = line.split ' ', 2 # only split at the first space
-        hash[splitArr.first] = splitArr.last
-      end
-      return hash
-    end
-  end
-
 
 
 
@@ -570,8 +533,14 @@ module Makr
 
 
 
-
-
+  # --
+  # RDoc stops processing comments if it finds a comment line containing '#--'
+  # Commenting can be turned back on with a line that starts '#++'.
+  #
+  # now some basic Task derived classes follow
+  #
+  # ++
+  
 
 
 
@@ -849,139 +818,7 @@ module Makr
 
 
 
-
-
-  # Represents a task executing the "moc" code generator from "Qt".
-  class MocTask < Task
-
-    # the path of the input and output file of the compilation
-    attr_reader :fileName, :mocFileName
-
-
-    # checks for presence of Q_OBJECT macro in file which indicates, that is needs to be processed by moc
-    def MocTask.containsQ_OBJECTMacro?(fileName)
-      IO.readlines(fileName).each do |line|
-        return true if (line.strip == "Q_OBJECT")
-      end
-      return false
-    end
-
-
-    # make a unique name for a MocTask out of the given fileName
-    def MocTask.makeName(fileName)
-      "MocTask__" + fileName
-    end
-
-
-    # constructing the string to call the moc out of the given config (or default values)
-    def makeMocCallString()
-      callString = String.new
-      if @config then
-        Makr.log.debug("MocTask " + @name + ": config name is: \"" + @config.name + "\"")
-        if (not @config["moc"]) then
-          Makr.log.warn("MocTask " + @name + ": no moc binary given, using moc in path")
-          callString = "moc "
-        else
-          callString = @config["moc"] + " "
-        end
-        callString += @config["moc.flags"] + " " if @config["moc.flags"] # add other options
-      else
-        Makr.log.warn("MocTask " + @name + ": no config given, using default bare moc")
-        callString = "moc "
-      end
-      return callString
-    end
-
-    alias :getConfigString :makeMocCallString
-
-
-    def makeMocFileName()
-      # default pre- and suffix for generated moc file
-      prefix = "" # default is no prefix to allow sort by name in file manager
-      suffix = ".moc_gen.cpp"
-      # check if user supplied other values via config
-      if @config then
-        prefix = @config["moc.filePrefix"] if (@config["moc.filePrefix"])
-        suffix = @config["moc.fileSuffix"] if (@config["moc.fileSuffix"])
-      end
-      @build.buildPath + "/" + prefix + fileName.gsub('/', '_').gsub('.', '_') + suffix
-    end
-
-
-    # The options accepted in the Config referenced by config could be "moc" and "moc.flags"
-    # (see also function makeMocCallString() )
-    def initialize(fileName, build, config = nil)
-      @fileName = Makr.cleanPathName(fileName)
-      # now we need a unique name for this task. As we're defining a FileTask as dependency to @fileName
-      # and a FileTask on the @mocFileName to ensure a build of the target if it was deleted or
-      # otherwise modified (whatever you can think of here), we need a unique name not related to these
-      super(MocTask.makeName(@fileName), config)
-      @build = build
-      @mocFileName = makeMocFileName()
-
-      # first we need a dep on the input file
-      if not @build.hasTask?(@fileName) then
-        @inputFileDep = FileTask.new(@fileName)
-        @build.addTask(@fileName, @inputFileDep)
-      else
-        @inputFileDep = @build.getTask(@fileName)
-      end
-      addDependency(@inputFileDep)
-      # now add a dep on the moc output file
-      if not @build.hasTask?(@mocFileName) then
-        @mocTargetDep = FileTask.new(@mocFileName, false)
-        @build.addTask(@mocFileName, @mocTargetDep)
-      else
-        @mocTargetDep = @build.getTask(@mocFileName)
-      end
-      addDependency(@mocTargetDep)
-      # now add another dep on the config
-      @configTaskName = ConfigTask.makeName(@name)
-      if not @build.hasTask?(@configTaskName) then
-        @configDep = ConfigTask.new(@configTaskName)
-        @build.addTask(@configTaskName, @configDep)
-      else
-        @configDep = @build.getTask(@configTaskName)
-      end
-      addDependency(@configDep)
-
-      Makr.log.debug("made MocTask with @name=\"" + @name + "\"")
-    end
-
-
-    def update()
-      # construct compiler command and execute it
-      mocCommand = makeMocCallString() + " -o " + @mocFileName + " " + @fileName
-      Makr.log.info("Executing moc in MocTask: \"" + @name + "\"\n\t" + mocCommand)
-      successful = system(mocCommand)
-      if not successful then
-        Makr.log.fatal("moc error, exiting build process\n\n\n")
-        Makr.abortBuild()
-      end
-      return @mocTargetDep.update() # we call this to update file information on the compiled target
-        # additionally this returns true, if the target was changed, and false otherwise what is what
-        # we want to propagate
-    end
-
-
-    # this task wants to be deleted if the file no longer contains the Q_OBJECT macro (TODO is this correct?)
-    def mustBeDeleted?()
-      return (not MocTask.containsQ_OBJECTMacro?(@fileName))
-    end
-
-
-    # remove possibly remaining generated mocced file before deletion
-    def cleanupBeforeDeletion()
-      File.delete @mocFileName	rescue nil
-    end
-
-  end
-
-
-
-
-
-
+  
   # TODO: there are some comonalities in the following classes, use mixins?
   #       (replacing "ProgramTask.makeName" with "self.class.makeName" for example)
 
@@ -1272,7 +1109,8 @@ module Makr
 
 
 
-  # This class represents a task, that build a program.
+  # This class represents a task that builds a program binary made up from all dependencies that
+  # define an objectFileName-member.
   class ProgramTask < Task
 
     attr_reader    :programName  # identifies the binary to be build, wants full path as usual
@@ -1391,16 +1229,23 @@ module Makr
 
 
 
-  # One of the central classes in Makr. Identifies a build variant (in a given buildPath). Instances of Build
-  # store configurations and tasks and restore them the next time makr is called. Without this cache,
-  # everything would be rebuild (no checking for existing targets etc.). Nevertheless this class has automatic
-  # cleanup and pruning of the configs and tasks in the cache.
+  # One of the central classes in Makr. Represents a variant build (in a given buildPath). Instances of Build
+  # are stored using Makr.saveBuild and restored via Makr.loadBuild, which should be one of the first commands
+  # in a Makrfile.rb. Without this cache, everything would be rebuild (no checking for existing targets etc.).
+  # Additionally, this class provides automatic cleanup and pruning of the configs and tasks in the cache.
+  # As Makr.saveBuild and Makr.loadBuild use the Marshall functionality of ruby, everything that is referenced
+  # from the instance is saved and restored (which typically comprises almost all objects created in a Makrfile.rb).
+  # To ensure that Makr.saveBuild is called, use a block with saveAfterBlock in the Makrfile.rb (just have a look
+  # at the examples).
   class Build
 
     attr_reader   :buildPath, :configs, :postUpdates
-    attr_accessor :defaultTask, :nrOfThreads, :fileHash
+    attr_accessor :defaultTask, :nrOfThreads
+    # hash from a file name to an Array of Task s (this is a kind of convenience member, see buildTasksForFile). It can
+    # be used to realize the build of a single file provided by many IDEs)
+    attr_accessor :fileHash
 
-
+    
     # build path identifies the build directory where the cache of configs and tasks is stored in a
     # subdirectory ".makr" and loaded upon construction, if the cache exists (which is fundamental to the
     # main build functionality "rebuild only tasks, that need it").
@@ -1413,8 +1258,7 @@ module Makr
       # hash from taskName to task (the cache is central to the update-on-demand-functionality and for automatic cleanup
       @taskHash      = Hash.new            # maps task names to tasks (names are for example full path file names)
       @taskHashCache = Hash.new            # a cache for the task hash that is loaded below
-      # hash  from fileName to Array of tasks (this is a kind of convenience member, see buildTasksForFile)
-      @fileHash = Hash.new
+      @fileHash = Hash.new                 # convenience member, see above
 
       @configs = Hash.new
 
@@ -1423,7 +1267,7 @@ module Makr
     end
 
 
-    # provide a block concept to ensure automatic save after block is done (should embrace all actions in a Makrfile.rb)
+    # block concept to ensure automatic save after block is done (should embrace all actions in a Makrfile.rb)
     def saveAfterBlock(cleanupConfigs = true)
       yield
     ensure
@@ -2071,6 +1915,195 @@ module Makr
     Dir.chdir(oldDir)
   end
 
+
+
+
+
+
+
+
+
+
+  
+
+
+
+  # Convenience class related to Config adding compiler flags (Config key "compiler.cFlags") and
+  # options related to a lib using pkg-config.
+  class PkgConfig
+
+    # cflags to config
+    def self.addCFlags(config, pkgName)
+      config.addUnique("compiler.cFlags", " " + (`pkg-config --cflags #{pkgName}`).strip!)
+    end
+
+
+    # add libs to config
+    def self.addLibs(config, pkgName, static = false)
+      command = "pkg-config --libs " + ((static)? " --static ":"") + pkgName
+      config.addUnique("linker.lFlags", " " + (`#{command}`).strip!)
+    end
+
+
+    # add libs and cflags to config
+    def self.add(config, pkgName)
+      PkgConfig.addCFlags(config, pkgName)
+      PkgConfig.addLibs(config, pkgName)
+    end
+
+
+    def self.getAllLibs()
+      list = `pkg-config --list-all`
+      hash = Hash.new
+      list.each_line do |line|
+        splitArr = line.split ' ', 2 # only split at the first space
+        hash[splitArr.first] = splitArr.last
+      end
+      return hash
+    end
+  end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  # Represents a task executing the "moc" code generator from "Qt".
+  class MocTask < Task
+
+    # the path of the input and output file of the compilation
+    attr_reader :fileName, :mocFileName
+
+
+    # checks for presence of Q_OBJECT macro in file which indicates, that is needs to be processed by moc
+    def MocTask.containsQ_OBJECTMacro?(fileName)
+      IO.readlines(fileName).each do |line|
+        return true if (line.strip == "Q_OBJECT")
+      end
+      return false
+    end
+
+
+    # make a unique name for a MocTask out of the given fileName
+    def MocTask.makeName(fileName)
+      "MocTask__" + fileName
+    end
+
+
+    # constructing the string to call the moc out of the given config (or default values)
+    def makeMocCallString()
+      callString = String.new
+      if @config then
+        Makr.log.debug("MocTask " + @name + ": config name is: \"" + @config.name + "\"")
+        if (not @config["moc"]) then
+          Makr.log.warn("MocTask " + @name + ": no moc binary given, using moc in path")
+          callString = "moc "
+        else
+          callString = @config["moc"] + " "
+        end
+        callString += @config["moc.flags"] + " " if @config["moc.flags"] # add other options
+      else
+        Makr.log.warn("MocTask " + @name + ": no config given, using default bare moc")
+        callString = "moc "
+      end
+      return callString
+    end
+
+    alias :getConfigString :makeMocCallString
+
+
+    def makeMocFileName()
+      # default pre- and suffix for generated moc file
+      prefix = "" # default is no prefix to allow sort by name in file manager
+      suffix = ".moc_gen.cpp"
+      # check if user supplied other values via config
+      if @config then
+        prefix = @config["moc.filePrefix"] if (@config["moc.filePrefix"])
+        suffix = @config["moc.fileSuffix"] if (@config["moc.fileSuffix"])
+      end
+      @build.buildPath + "/" + prefix + fileName.gsub('/', '_').gsub('.', '_') + suffix
+    end
+
+
+    # The options accepted in the Config referenced by config could be "moc" and "moc.flags"
+    # (see also function makeMocCallString() )
+    def initialize(fileName, build, config = nil)
+      @fileName = Makr.cleanPathName(fileName)
+      # now we need a unique name for this task. As we're defining a FileTask as dependency to @fileName
+      # and a FileTask on the @mocFileName to ensure a build of the target if it was deleted or
+      # otherwise modified (whatever you can think of here), we need a unique name not related to these
+      super(MocTask.makeName(@fileName), config)
+      @build = build
+      @mocFileName = makeMocFileName()
+
+      # first we need a dep on the input file
+      if not @build.hasTask?(@fileName) then
+        @inputFileDep = FileTask.new(@fileName)
+        @build.addTask(@fileName, @inputFileDep)
+      else
+        @inputFileDep = @build.getTask(@fileName)
+      end
+      addDependency(@inputFileDep)
+      # now add a dep on the moc output file
+      if not @build.hasTask?(@mocFileName) then
+        @mocTargetDep = FileTask.new(@mocFileName, false)
+        @build.addTask(@mocFileName, @mocTargetDep)
+      else
+        @mocTargetDep = @build.getTask(@mocFileName)
+      end
+      addDependency(@mocTargetDep)
+      # now add another dep on the config
+      @configTaskName = ConfigTask.makeName(@name)
+      if not @build.hasTask?(@configTaskName) then
+        @configDep = ConfigTask.new(@configTaskName)
+        @build.addTask(@configTaskName, @configDep)
+      else
+        @configDep = @build.getTask(@configTaskName)
+      end
+      addDependency(@configDep)
+
+      Makr.log.debug("made MocTask with @name=\"" + @name + "\"")
+    end
+
+
+    def update()
+      # construct compiler command and execute it
+      mocCommand = makeMocCallString() + " -o " + @mocFileName + " " + @fileName
+      Makr.log.info("Executing moc in MocTask: \"" + @name + "\"\n\t" + mocCommand)
+      successful = system(mocCommand)
+      if not successful then
+        Makr.log.fatal("moc error, exiting build process\n\n\n")
+        Makr.abortBuild()
+      end
+      return @mocTargetDep.update() # we call this to update file information on the compiled target
+        # additionally this returns true, if the target was changed, and false otherwise what is what
+        # we want to propagate
+    end
+
+
+    # this task wants to be deleted if the file no longer contains the Q_OBJECT macro (TODO is this correct?)
+    def mustBeDeleted?()
+      return (not MocTask.containsQ_OBJECTMacro?(@fileName))
+    end
+
+
+    # remove possibly remaining generated mocced file before deletion
+    def cleanupBeforeDeletion()
+      File.delete @mocFileName  rescue nil
+    end
+
+  end
 
 
 
