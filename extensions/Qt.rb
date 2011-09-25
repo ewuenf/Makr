@@ -139,6 +139,68 @@ module Makr
 
 
 
+
+  # Produces a MocTask for every fileName given, if it does not exist and an additional CompileTask for the generated file.
+  # All CompileTask objects get the compileTaskConfigName if given, all MocTasks get the mocTaskConfigName.
+  class MocTaskGenerator
+
+    def initialize(build, compileTaskConfig = nil, mocTaskConfig = nil)
+      @build = build
+      @mocTaskConfig = mocTaskConfig
+      @compileTaskConfig = compileTaskConfig
+    end
+
+
+    def generate(fileName)
+      # first check, if file has Q_OBJECT, otherwise we return no tasks
+      return Array.new if not MocTask.containsQ_OBJECTMacro?(fileName)
+
+      # Q_OBJECT contained, now go on
+      Makr.cleanPathName(fileName)
+      mocTaskName = MocTask.makeName(fileName)
+      if not @build.hasTask?(mocTaskName) then
+        mocTask = MocTask.new(fileName, @build, @mocTaskConfig)
+        @build.addTask(mocTaskName, mocTask)
+      end
+      mocTask = @build.getTask(mocTaskName)
+      # care for changed configName when config is from cache
+      if mocTask.config != @mocTaskConfig then
+        Makr.log.debug( "configName has changed in task " + mocTask.name + \
+                       " compared to cached version, setting to new value: " + @mocTaskConfig.name)
+        mocTask.config = @mocTaskConfig
+      end
+      tasks = [mocTask]
+      # TODO make common code with CompileTaskGenerator for the following
+      compileTaskName = CompileTask.makeName(mocTask.mocFileName)
+      if not @build.hasTask?(compileTaskName) then
+        compileTask = CompileTask.new(mocTask.mocFileName, @build, @compileTaskConfig, true, mocTask)
+        @build.addTask(compileTaskName, compileTask)
+      end
+      compileTask = @build.getTask(compileTaskName)
+      # care for changed configName when config is from cache
+      if compileTask.config != @compileTaskConfig then
+        Makr.log.debug( "configName has changed in task " + compileTask.name + \
+                       " compared to cached version, setting to new value: " + @compileTaskConfig)
+        compileTask.config = @compileTaskConfig
+      end
+      tasks.push(compileTask)
+      # now fill fileHash
+      @build.fileHash[fileName] ||= Array.new
+      @build.fileHash[fileName].concat(tasks)
+      @build.fileHash[fileName].uniq!
+      return tasks
+    end
+
+  end
+
+
+
+
+
+
+
+
+
 end     # end of module makr ######################################################################################
 
 

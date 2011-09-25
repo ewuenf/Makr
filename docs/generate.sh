@@ -1,3 +1,3 @@
 #!/bin/bash
-rdoc --op html ../makr.rb
+rdoc --op source_doc_html ../makr.rb ../extensions/*
 
