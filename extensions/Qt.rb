@@ -106,6 +106,11 @@ module Makr
 
 
     def update()
+      # we first delete the target file so that upon miscompilation at least the @mocTargetDep wants an update
+      # the next time we run this script so that we can guarantee an update to the last state of the dependencies
+      File.delete @mocFileName rescue nil
+      @mocTargetDep.update() # we need to update the dep after deletion
+
       # construct compiler command and execute it
       mocCommand = makeMocCallString() + " -o " + @mocFileName + " " + @fileName
       Makr.log.info("Executing moc in MocTask: \"" + @name + "\"\n\t" + mocCommand)

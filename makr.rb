@@ -489,7 +489,7 @@ module Makr
           Makr.log.fatal("file #{@fileName} is unexpectedly missing!\n\n")
           Makr.abortBuild()
         end
-        Makr.log.info("file #{@fileName} is missing, so update() in FileTask is true.")
+        Makr.log.debug("file #{@fileName} is missing, so update() in FileTask is true.")
         return true
       end
       retValue = false
@@ -517,7 +517,7 @@ module Makr
         end
       end
       if retValue then
-        Makr.log.info("Changed: " + @fileName)
+        Makr.log.debug("Changed: " + @fileName)
       end
       return retValue
     end
@@ -534,7 +534,7 @@ module Makr
   # now some basic Task derived classes follow
   #
   # ++
-  
+
 
 
 
@@ -772,9 +772,14 @@ module Makr
 
 
     def update()
+      # we first delete the target file so that upon miscompilation at least the @compileTargetDep wants an update
+      # the next time we run this script so that we can guarantee an update to the last state of the dependencies
+      File.delete @objectFileName rescue nil
+      @compileTargetDep.update() # we need to update the dep after deletion
+
       # we do not modify task structure on update and defer this to the postUpdate call like good little children
       @build.registerPostUpdate(self)
-      # we first execute the compiler to deliver an update on the dependent includes. We could do this
+      # here we execute the compiler to deliver an update on the dependent includes before compilation. We could do this
       # in postUpdate, too, but we assume this to be faster, as the files should be in OS cache afterwards and
       # thus the compilation (which is the next step) should be faster
       getDepsStringArrayFromCompiler()
@@ -786,11 +791,10 @@ module Makr
       if not successful then
         Makr.log.fatal("CompileTask " + @name + ": compile error, exiting build process\n#####################\n\n")
         Makr.abortBuild()
-        return false
       end
       return @compileTargetDep.update() # we call this to update file information on the compiled target
         # additionally this returns true, if the target was changed, and false otherwise what is what
-        # we want to propagate
+        # we want to propagate (which also is true for the abort case)
     end
 
 
@@ -915,6 +919,11 @@ module Makr
 
 
     def update()
+      # we first delete the target file so that upon miscompilation at least the @libTargetDep wants an update
+      # the next time we run this script so that we can guarantee an update to the last state of the dependencies
+      File.delete @libFileName rescue nil
+      @libTargetDep.update() # we need to update the dep after deletion
+
       # we always check for properly setup dependencies
       checkDependencyTasksForPIC()
       # build compiler command and execute it
@@ -931,7 +940,7 @@ module Makr
       end
       return @libTargetDep.update() # we call this to update file information on the compiled target
         # additionally this returns true, if the target was changed, and false otherwise what is what
-        # we want to propagate
+        # we want to propagate (which also is true for the abort case)
     end
 
 
@@ -1024,12 +1033,12 @@ module Makr
 
       # first we need a dependency on the target
       if not @build.hasTask?(@libFileName) then
-        @targetDep = FileTask.new(@libFileName, false)
-        @build.addTask(@libFileName, @targetDep)
+        @libTargetDep = FileTask.new(@libFileName, false)
+        @build.addTask(@libFileName, @libTargetDep)
       else
-        @targetDep = @build.getTask(@libFileName)
+        @libTargetDep = @build.getTask(@libFileName)
       end
-      addDependency(@targetDep)
+      addDependency(@libTargetDep)
       # now add another dependency task on the config
       @configDepName = ConfigTask.makeName(@libFileName)
       if not @build.hasTask?(@configDepName) then
@@ -1045,6 +1054,11 @@ module Makr
 
 
     def update()
+      # we first delete the target file so that upon miscompilation at least the @libTargetDep wants an update
+      # the next time we run this script so that we can guarantee an update to the last state of the dependencies
+      File.delete @libFileName rescue nil
+      @libTargetDep.update() # we need to update the dep after deletion
+
       # build compiler command and execute it
       linkCommand = makeLinkerCallString() + @libFileName
       @dependencies.each do |dep|
@@ -1057,9 +1071,9 @@ module Makr
         Makr.log.fatal("linker error, exiting build process\n\n\n")
         Makr.abortBuild()
       end
-      return @targetDep.update() # we call this to update file information on the compiled target
+      return @libTargetDep.update() # we call this to update file information on the compiled target
         # additionally this returns true, if the target was changed, and false otherwise what is what
-        # we want to propagate
+        # we want to propagate (which also is true for the abort case)
     end
 
 
@@ -1173,6 +1187,11 @@ module Makr
 
 
     def update()
+      # we first delete the target file so that upon miscompilation at least the @targetDep wants an update
+      # the next time we run this script so that we can guarantee an update to the last state of the dependencies
+      File.delete @programName rescue nil
+      @targetDep.update() # we need to update the dep after deletion
+
       # build compiler command and execute it
       linkCommand = makeLinkerCallString() + " -o " + @programName
       @dependencies.each do |dep|
@@ -1187,7 +1206,7 @@ module Makr
       end
       return @targetDep.update() # we call this to update file information on the compiled target
         # additionally this returns true, if the target was changed, and false otherwise what is what
-        # we want to propagate
+        # we want to propagate (which also is true for the abort case)
     end
 
 
@@ -1938,8 +1957,14 @@ end
 Signal.trap("USR1", abort_handler)
 Signal.trap("TERM", abort_handler)
 
-# set global vars 
-$makrExtensionsDir = File.dirname(__FILE__) + "/extensions"
+
+# set global vars
+
+# for the following variable, we care for symlinks only, hardlinks will go wrong
+# (TODO: maybe we need an environment var here or something hardcoded in this file?)
+$makrDir = (File.symlink?(__FILE__))?File.dirname(File.readlink(__FILE__)):File.dirname(__FILE__)
+$makrExtensionsDir = $makrDir + "/extensions"
+
 
 # we need a basic ScriptArguments object pushed to stack (kind of dummy holding ARGV)
 # we use a relative path here to allow moving of build dir
