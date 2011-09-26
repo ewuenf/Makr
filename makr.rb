@@ -1576,6 +1576,12 @@ module Makr
       @@abortUpdate = arg
     end
 
+    # we use this to provide a countdown functionality for a parallel build in the log output
+    # similar to what cmake provides with a percentage upcount. We count down the number of tasks
+    # that need to be done, so its always correct in the sense that it comes down to zero at the
+    # end of a build
+    # ( see references to UpdateTraverser.nrOfTasksToBuild at the end of this script to see how the
+    #  output is generated )
     @@nrOfTasksToBuild = 0
     def UpdateTraverser.nrOfTasksToBuild
       @@nrOfTasksToBuild
@@ -1610,6 +1616,7 @@ module Makr
           if callUpdate then
             retVal = @task.update()
           end
+          # as we have done a task (wether it was updated or not doesnt matter), we want to decrease this count
           UpdateTraverser.nrOfTasksToBuild -= 1
           return if UpdateTraverser.abortUpdate # cooperatively abort build (inserted here again for faster reaction)
           @task.updateMark = false
@@ -1646,6 +1653,7 @@ module Makr
     #
     # TODO: We expect the DAG to have no cycles here. Should we check?
     def traverse(root)
+      # reset the count that represents the nr of tasks that are affected by this update
       @@nrOfTasksToBuild = 0
       collectedTasksWithNoDeps = Array.new
       recursiveMarkAndCollectTasksWithNoDeps(root, collectedTasksWithNoDeps)
@@ -1666,6 +1674,7 @@ module Makr
       task.updateMark = true
       task.dependenciesUpdatedCount = 0
       task.dependencyWasUpdated = false
+      # each task that we mark gets touched by Updater, so we increase this count as it is decreased there
       @@nrOfTasksToBuild += 1
 
       # then collect, if no further deps or recurse
