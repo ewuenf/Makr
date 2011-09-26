@@ -1259,7 +1259,7 @@ module Makr
     # be used to realize the build of a single file provided by many IDEs)
     attr_accessor :fileHash
 
-    
+
     # build path identifies the build directory where the cache of configs and tasks is stored in a
     # subdirectory ".makr" and loaded upon construction, if the cache exists (which is fundamental to the
     # main build functionality "rebuild only tasks, that need it").
@@ -1560,6 +1560,9 @@ module Makr
 
 
 
+
+
+
   # This class realizes the multi-threaded update step.
   # It can be used stand-alone, but typically calling Build::build() is the standard way to do it.
   class UpdateTraverser
@@ -1571,6 +1574,14 @@ module Makr
     end
     def UpdateTraverser.abortUpdate=(arg)
       @@abortUpdate = arg
+    end
+
+    @@nrOfTasksToBuild = 0
+    def UpdateTraverser.nrOfTasksToBuild
+      @@nrOfTasksToBuild
+    end
+    def UpdateTraverser.nrOfTasksToBuild=(arg)
+      @@nrOfTasksToBuild = arg
     end
 
 
@@ -1599,6 +1610,7 @@ module Makr
           if callUpdate then
             retVal = @task.update()
           end
+          UpdateTraverser.nrOfTasksToBuild -= 1
           return if UpdateTraverser.abortUpdate # cooperatively abort build (inserted here again for faster reaction)
           @task.updateMark = false
           @task.dependantTasks.each do |dependantTask|
@@ -1634,6 +1646,7 @@ module Makr
     #
     # TODO: We expect the DAG to have no cycles here. Should we check?
     def traverse(root)
+      @@nrOfTasksToBuild = 0
       collectedTasksWithNoDeps = Array.new
       recursiveMarkAndCollectTasksWithNoDeps(root, collectedTasksWithNoDeps)
       collectedTasksWithNoDeps.uniq!
@@ -1648,10 +1661,12 @@ module Makr
 
     # internal helper function (see also traverse(root) )
     def recursiveMarkAndCollectTasksWithNoDeps(task, collectedTasksWithNoDeps)
+      return if task.updateMark # task was already marked and thus we dont need to descend
       # prepare the task variables upon descend
       task.updateMark = true
       task.dependenciesUpdatedCount = 0
       task.dependencyWasUpdated = false
+      @@nrOfTasksToBuild += 1
 
       # then collect, if no further deps or recurse
       if task.dependencies.empty? then
@@ -1945,7 +1960,7 @@ end     # end of module makr ###################################################
 # first start logger and set start logging level (can of course be changed by user)
 Makr.log.level = Logger::DEBUG
 Makr.log.formatter = proc { |severity, datetime, progname, msg|
-    "[makr #{severity} #{datetime}]    #{msg}\n"
+    "[makr #{severity} #{datetime}] [#{Makr::UpdateTraverser.nrOfTasksToBuild}]    #{msg}\n"
 }
 Makr.log << "\n\nmakr version 0.9.23\n\n"  # just give short version notice on every startup
 
