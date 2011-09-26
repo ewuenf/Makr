@@ -15,7 +15,7 @@ $target = $arguments.arguments[1]
 # implement a simple clean target
 if($target == "clean") 
   system("rm -f " + $buildDir + "/*")
-  return # we return here, but we could also go on and build everything
+  exit
 end
 
 # when we're not cleaning, we build:

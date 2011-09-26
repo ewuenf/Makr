@@ -73,19 +73,20 @@ module Makr
     end
 
     attr_accessor :queue_limit
+    attr_reader :nrOfThreads
 
-    # Initialize with count threads to run (if count is not given, all processors of the system will be used)
-    def initialize(count = nil, queue_limit = 0)
+    # Initialize with nrOfThreads threads to run (if count is not given, all processors of the system will be used)
+    def initialize(nrOfThreads = nil, queue_limit = 0)
       @mutex = Mutex.new
       @executors = []
       @queue = []
       @queue_limit = queue_limit
-      if count then
-        @count = count
+      if nrOfThreads then
+        @nrOfThreads = nrOfThreads
       else
-        @count = `grep -c processor /proc/cpuinfo`.to_i  # works only on linux (and maybe most unixes)
+        @nrOfThreads = `grep -c processor /proc/cpuinfo`.to_i  # works only on linux (and maybe most unixes)
       end
-      @count.times { @executors << Executor.new(@queue, @mutex) }
+      @nrOfThreads.times { @executors << Executor.new(@queue, @mutex) }
     end
 
     # Runs the block at some time in the near future
@@ -114,7 +115,7 @@ module Makr
 
     # Size of the thread pool
     def size
-      @count
+      @nrOfThreads
     end
 
     # Kills all threads
@@ -331,7 +332,7 @@ module Makr
     # reference to Config object
     attr_accessor :config
     # these are used by the multi-threaded UpdateTraverser
-    attr_accessor :mutex, :updateMark, :dependenciesUpdatedCount, :dependencyWasUpdated
+    attr_accessor :mutex, :updateMark, :dependenciesUpdatedCount, :dependencyWasUpdated, :updateDuration
 
 
     # name must be unique within a build (see class Build)!
@@ -347,6 +348,7 @@ module Makr
       @updateMark = false
       @dependenciesUpdatedCount = 0
       @dependencyWasUpdated = false
+      @updateDuration = 1.0
     end
 
 
@@ -1580,14 +1582,14 @@ module Makr
     # similar to what cmake provides with a percentage upcount. We count down the number of tasks
     # that need to be done, so its always correct in the sense that it comes down to zero at the
     # end of a build
-    # ( see references to UpdateTraverser.nrOfTasksToBuild at the end of this script to see how the
+    # ( see references to UpdateTraverser.timeToBuildDownRemaining at the end of this script to see how the
     #  output is generated )
-    @@nrOfTasksToBuild = 0
-    def UpdateTraverser.nrOfTasksToBuild
-      @@nrOfTasksToBuild
+    @@timeToBuildDownRemaining = 0
+    def UpdateTraverser.timeToBuildDownRemaining
+      @@timeToBuildDownRemaining
     end
-    def UpdateTraverser.nrOfTasksToBuild=(arg)
-      @@nrOfTasksToBuild = arg
+    def UpdateTraverser.timeToBuildDownRemaining=(arg)
+      @@timeToBuildDownRemaining = arg
     end
 
 
@@ -1612,12 +1614,15 @@ module Makr
           if not @task.updateMark then
             raise "[makr] Unexpectedly starting on a task that needs no update!"
           end
+          # as we will have done a task (wether it was updated or not doesnt matter), we want to decrease the timeToBuildDownRemaining
+          # we scale by the nrOfThreads employed (ok, this is not a linear speedup, but close to it)
+          UpdateTraverser.timeToBuildDownRemaining -= @task.updateDuration / @threadPool.nrOfThreads
           retVal = false
           if callUpdate then
+            t1 = Time.now
             retVal = @task.update()
+            @task.updateDuration = (Time.now - t1) # update expected duration when task is updated
           end
-          # as we have done a task (wether it was updated or not doesnt matter), we want to decrease this count
-          UpdateTraverser.nrOfTasksToBuild -= 1
           return if UpdateTraverser.abortUpdate # cooperatively abort build (inserted here again for faster reaction)
           @task.updateMark = false
           @task.dependantTasks.each do |dependantTask|
@@ -1654,7 +1659,7 @@ module Makr
     # TODO: We expect the DAG to have no cycles here. Should we check?
     def traverse(root)
       # reset the count that represents the nr of tasks that are affected by this update
-      @@nrOfTasksToBuild = 0
+      @@timeToBuildDownRemaining = 0.0
       collectedTasksWithNoDeps = Array.new
       recursiveMarkAndCollectTasksWithNoDeps(root, collectedTasksWithNoDeps)
       collectedTasksWithNoDeps.uniq!
@@ -1674,8 +1679,10 @@ module Makr
       task.updateMark = true
       task.dependenciesUpdatedCount = 0
       task.dependencyWasUpdated = false
-      # each task that we mark gets touched by Updater, so we increase this count as it is decreased there
-      @@nrOfTasksToBuild += 1
+      # each task that we mark gets touched by Updater, so we increase timeToBuildDownRemaining by the
+      # number of seconds estimated in previous builds (see Updater.run)
+      # we scale by the nrOfThreads employed (ok, this is not a linear speedup, but close to it)
+      @@timeToBuildDownRemaining += task.updateDuration / @threadPool.nrOfThreads
 
       # then collect, if no further deps or recurse
       if task.dependencies.empty? then
@@ -1969,7 +1976,7 @@ end     # end of module makr ###################################################
 # first start logger and set start logging level (can of course be changed by user)
 Makr.log.level = Logger::DEBUG
 Makr.log.formatter = proc { |severity, datetime, progname, msg|
-    "[makr #{severity} #{datetime}] [#{Makr::UpdateTraverser.nrOfTasksToBuild}]    #{msg}\n"
+    "[makr #{severity} #{datetime}] [#{Makr::UpdateTraverser.timeToBuildDownRemaining}]    #{msg}\n"
 }
 Makr.log << "\n\nmakr version 0.9.23\n\n"  # just give short version notice on every startup
 
