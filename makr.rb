@@ -429,7 +429,7 @@ module Makr
 
 
     # kind of debugging to_s function
-    def printDependencies(prefix)
+    def printDependencies(prefix = "")
       Makr.log.info(prefix + @name + " deps size: " + @dependencies.size.to_s)
       @dependencies.each do |dep|
         dep.printDependencies(prefix + "  ")
@@ -766,7 +766,7 @@ module Makr
       dependencyFiles.each do |depFile|
         depFile.strip!
         next if depFile.empty?
-        next if (depFile == @fileName)
+        next if ( (depFile == @fileName) or (("./" + depFile) == @fileName))
         if @build.hasTask?(depFile) then
           task = @build.getTask(depFile)
           if not @dependencies.include?(task)
@@ -1425,8 +1425,9 @@ module Makr
       while not deleteArr.empty? do
         task = deleteArr.delete_at(0)
         @taskHashCache.delete(task.name)
-        deleteArr.concat(task.dependantTasks)
-        task.cleanupBeforeDeletion()
+        deleteArr.concat(task.dependantTasks) # pickup dependantTasks, which need to be deleted, too
+        task.cleanupBeforeDeletion() # do last cleanups
+        task.clearAll()  # untie all connections
       end
     end
 
@@ -1614,7 +1615,9 @@ module Makr
             successfulUpdate = @task.update()
             @task.updateDuration = (Time.now - t1)
             # we only set child state on inner nodes and if the update was successful (leaf nodes set their state themselves)
-            @task.state = childState if successfulUpdate and (not @task.dependencies.empty?)
+            if successfulUpdate and (not @task.dependencies.empty?) then
+              @task.state = collectChildState(@task)
+            end
           end
           if ((not successfulUpdate) and @stopOnFirstError) then
             puts "build error"
