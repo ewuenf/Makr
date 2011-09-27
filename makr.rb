@@ -1281,11 +1281,11 @@ module Makr
     def build(task = nil)
       updateTraverser = UpdateTraverser.new(@nrOfThreads)
       if task then
-        updateTraverser.traverse(task, @stopOnFirstError)
+        updateTraverser.traverse(self, task, @stopOnFirstError)
       else
         # check default task or search for a single task without dependant tasks (but give warning)
         if @defaultTask.kind_of? Task then
-          updateTraverser.traverse(@defaultTask, @stopOnFirstError)
+          updateTraverser.traverse(self, @defaultTask, @stopOnFirstError)
         else
           Makr.log.warn("no (default) task given for build, searching for root task")
           taskFound = @taskHash.values.select {|v| v.dependantTasks.empty?}
@@ -1293,7 +1293,7 @@ module Makr
             if taskFound.size > 1 then
               Makr.log.warn("more than one root task found, taking the first found, which is: " + taskFound.first.name)
             end
-            updateTraverser.traverse(taskFound.first, @stopOnFirstError)
+            updateTraverser.traverse(self, taskFound.first, @stopOnFirstError)
           else
             raise "failed with all fallbacks in Build.build"
           end
@@ -1317,6 +1317,13 @@ module Makr
       end
       @fileHash[fileName].each do |task|
         build(task)
+      end
+    end
+
+
+    def resetUpdateMarks()
+      @taskHash.each_value do |value|
+        value.updateMark = false
       end
     end
 
@@ -1579,9 +1586,10 @@ module Makr
     # nested class representing a single task update, executed in a thread pool
     class Updater
 
-      def initialize(task, threadPool)
+      def initialize(task, threadPool, stopOnFirstError)
         @task = task
         @threadPool = threadPool
+        @stopOnFirstError = stopOnFirstError
       end
 
       def collectChildState(task) # returns empty string if task has no childs
@@ -1608,7 +1616,6 @@ module Makr
           UpdateTraverser.timeToBuildDownRemaining -= @task.updateDuration / @threadPool.nrOfThreads
 
           childState = collectChildState(@task)
-          successfulUpdate = true
           if @task.dependencies.empty? or (childState != @task.state) then # do we need to update?
             # we update expected duration when task is updated, so that only the last measured time is used the next time
             t1 = Time.now
@@ -1618,11 +1625,9 @@ module Makr
             if successfulUpdate and (not @task.dependencies.empty?) then
               @task.state = collectChildState(@task)
             end
-          end
-          if ((not successfulUpdate) and @stopOnFirstError) then
-            puts "build error"
-            UpdateTraverser.abortBuild = true
-            puts "set abort"
+            if ((not successfulUpdate) and @stopOnFirstError) then
+              UpdateTraverser.abortBuild = true
+            end
           end
           return if UpdateTraverser.abortBuild # cooperatively abort build (inserted here again for faster reaction)
           @task.updateMark = false
@@ -1632,7 +1637,7 @@ module Makr
                 # if we are the last thread to reach the dependant task, we will run the next thread on it
                 dependantTask.dependenciesUpdatedCount = dependantTask.dependenciesUpdatedCount + 1
                 if (dependantTask.dependenciesUpdatedCount == dependantTask.dependencies.size) then
-                  updater = Updater.new(dependantTask, @threadPool)
+                  updater = Updater.new(dependantTask, @threadPool, @stopOnFirstError)
                   @threadPool.execute {updater.run()}
                 end
               end
@@ -1655,16 +1660,17 @@ module Makr
     # of threads is limited by a thread pool.
     #
     # TODO: We expect the DAG to have no cycles here. Should we check?
-    def traverse(root, stopOnFirstError)
+    def traverse(build, root, stopOnFirstError)
+      build.resetUpdateMarks()
       @stopOnFirstError = stopOnFirstError
       # reset the count that represents the nr of tasks that are affected by this update
       @@timeToBuildDownRemaining = 0.0
       collectedTasksWithNoDeps = Array.new
       recursiveMarkAndCollectTasksWithNoDeps(root, collectedTasksWithNoDeps)
       collectedTasksWithNoDeps.uniq!
-      Makr.log.debug("collectedTasksWithNoDeps.size: " + collectedTasksWithNoDeps.size.to_s)
+      Makr.log.info("collectedTasksWithNoDeps.size: " + collectedTasksWithNoDeps.size.to_s)
       collectedTasksWithNoDeps.each do |noDepsTask|
-        updater = Updater.new(noDepsTask, @threadPool)
+        updater = Updater.new(noDepsTask, @threadPool, stopOnFirstError)
         @threadPool.execute {updater.run()}
       end
       @threadPool.join()
