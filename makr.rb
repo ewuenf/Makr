@@ -1947,7 +1947,7 @@ Makr.log.level = Logger::DEBUG
 Makr.log.formatter = proc { |severity, datetime, progname, msg|
     "[makr #{severity} #{datetime}] [#{Makr::UpdateTraverser.timeToBuildDownRemaining}]    #{msg}\n"
 }
-Makr.log << "\n\nmakr version 0.9.23\n\n"  # just give short version notice on every startup
+Makr.log << "\n\nmakr version 1.0\n\n"  # just give short version notice on every startup
 
 # then set the signal handler to allow cooperative aborting of the build process on SIGUSR1 or SIGTERM
 abort_handler = Proc.new do
