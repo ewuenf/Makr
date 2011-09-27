@@ -106,22 +106,13 @@ module Makr
 
 
     def update()
-      # we first delete the target file so that upon miscompilation at least the @mocTargetDep wants an update
-      # the next time we run this script so that we can guarantee an update to the last state of the dependencies
-      File.delete @mocFileName rescue nil
-      @mocTargetDep.update() # we need to update the dep after deletion
-
       # construct compiler command and execute it
       mocCommand = makeMocCallString() + " -o " + @mocFileName + " " + @fileName
       Makr.log.info("Executing moc in MocTask: \"" + @name + "\"\n\t" + mocCommand)
       successful = system(mocCommand)
-      if not successful then
-        Makr.log.fatal("moc error, exiting build process\n\n\n")
-        Makr.abortBuild()
-      end
-      return @mocTargetDep.update() # we call this to update file information on the compiled target
-        # additionally this returns true, if the target was changed, and false otherwise what is what
-        # we want to propagate
+      Makr.log.error("Error in MocTask #{@name}") if not successful
+      @mocTargetDep.update() # update file information on the compiled target in any case
+      return successful
     end
 
 

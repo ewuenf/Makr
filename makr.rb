@@ -167,7 +167,7 @@ module Makr
   # central aborting method. TODO the concept does not seem final
   def Makr.abortBuild()
     Makr.log.fatal("Aborting build process.")
-    UpdateTraverser.abortUpdate = true # cooperative abort
+    UpdateTraverser.abortBuild = true # cooperative abort
     # Kernel.exit! 1  did not work as expected
   end
 
@@ -326,13 +326,18 @@ module Makr
   # attached (see class Config)
   class Task
 
-    # dependencies are of course tasks this task depends on an additionally we have the array of
+    # dependencies are of course tasks this task depends on. Additionally we have the array of
     # dependantTask that depend on this task (double-linked graph structure)
     attr_reader :name, :dependencies, :dependantTasks
     # reference to Config object
     attr_accessor :config
     # these are used by the multi-threaded UpdateTraverser
-    attr_accessor :mutex, :updateMark, :dependenciesUpdatedCount, :dependencyWasUpdated, :updateDuration
+    attr_accessor :mutex, :updateMark, :dependenciesUpdatedCount, :updateDuration
+    # state determines for inner nodes of the task graph, if an update is necessary:
+    # for leaf nodes the state must be set by the nodes upon call to the update() function, while
+    # for inner nodes, the state is set by UpdateTraverser::Updater to match an accumulation
+    # of the child states, so that upon a new build run, a necessary update can be detected
+    attr_accessor :state
 
 
     # name must be unique within a build (see class Build)!
@@ -347,8 +352,9 @@ module Makr
       @mutex = Mutex.new
       @updateMark = false
       @dependenciesUpdatedCount = 0
-      @dependencyWasUpdated = false
       @updateDuration = 1.0
+
+      @state = @accumulatedChildState = String.new
     end
 
 
@@ -398,10 +404,10 @@ module Makr
     end
 
 
-    # Every subclass should provide an "update()" function, that returns wether the target of the task is updated/changed.
+    # Every subclass should provide an "update()" function, that returns wether the update was successful or not
     # The task graph itself should be unchanged during update. Use function postUpdate() for this purpose.
-    def update() 
-      false
+    def update()
+      return true # default is always successful update
     end
 
 
@@ -436,6 +442,46 @@ module Makr
 
   end
 
+
+
+
+
+
+  # --
+  # RDoc stops processing comments if it finds a comment line containing '#--'
+  # Commenting can be turned back on with a line that starts '#++'.
+  #
+  # now some basic Task derived classes follow
+  #
+  # ++
+
+
+
+
+
+  # This class represents the dependency on changed strings in a Config, it is used for example in CompileTask
+  class ConfigTask < Task
+
+    # make a unique name for CompileTasks out of the fileName which is to be compiled
+    def ConfigTask.makeName(name)
+      "ConfigTask__" + name
+    end
+
+
+    def initialize(name)
+      super
+    end
+
+
+    def update()
+      # produce a nice message in error case (we want exactly one dependant task)
+      raise "[makr] ConfigTask #{name} does not have a dependant task, but needs one!" if (not (dependantTasks.size == 1))
+      # just update state with config string from the only dependantTask
+      @state = dependantTasks.first.getConfigString()
+      return true # task is always successful
+    end
+
+  end
 
 
 
@@ -486,91 +532,53 @@ module Makr
 
 
     def update()
+      # first check missing file case
       if (not File.file?(@fileName)) then
+        @state = String.new  # empty string means update is definitely necessary
         if @missingFileIsError then
           Makr.log.fatal("file #{@fileName} is unexpectedly missing!\n\n")
           Makr.abortBuild()
+          return false # error case
         end
-        Makr.log.debug("file #{@fileName} is missing, so update() in FileTask is true.")
-        return true
+        Makr.log.debug("file #{@fileName} is missing, induces update.")
+        return true # success case
       end
-      retValue = false
+
       # now we either use the hash of the file or we use file attributes to determine changes
       unless @useFileHash.is_a? NilClass then # the local variable overrides class variable if set
         useFileHash = @useFileHash
       else
         useFileHash = @@useFileHash
       end
-      if useFileHash then # file hash
+
+      hasChanged = false # used only for output below
+
+      if useFileHash then                     # file hash
         curHash = MD5.new(open(@fileName, 'rb').read).hexdigest
         if(@fileHash != curHash)
           @fileHash = curHash
-          retValue = true
+          @state = @fileHash  # compose state from file state
+          hasChanged = true
         end
-      else # file attribs checking
+
+      else                                    # file attribs checking
         stat = File.stat(@fileName);
-        if (@time != stat.mtime) then
+        if (@time != stat.mtime) or (@size != stat.size) then
           @time = stat.mtime
-          retValue = true
-        end
-        if (@size != stat.size) then
           @size = stat.size
-          retValue = true
+          @state = @time.to_s + @size.to_s # compose state from file state
+          hasChanged = true
         end
       end
-      if retValue then
-        Makr.log.debug("Changed: " + @fileName)
+
+      if hasChanged then
+        Makr.log.debug("file #{@fileName} has changed, induces update.")
       end
-      return retValue
+
+      return true # always successful, when here
     end
 
   end
-
-
-
-
-  # --
-  # RDoc stops processing comments if it finds a comment line containing '#--'
-  # Commenting can be turned back on with a line that starts '#++'.
-  #
-  # now some basic Task derived classes follow
-  #
-  # ++
-
-
-
-
-
-  # This class represents the dependency on changed strings in a Config, it is used for example in CompileTask
-  class ConfigTask < Task
-
-    # make a unique name for CompileTasks out of the fileName which is to be compiled
-    def ConfigTask.makeName(name)
-      "ConfigTask__" + name
-    end
-
-
-    def initialize(name)
-      super
-      @storedConfigString = String.new
-    end
-
-
-    def update()
-      if not dependantTasks.first then
-        raise "[makr] ConfigTask \"" + name + "\" does not have a dependant task, but needs one!"
-      end
-      currentConfigString = dependantTasks.first.getConfigString()
-      retVal = (@storedConfigString != currentConfigString)
-      @storedConfigString = currentConfigString
-      retVal
-    end
-
-  end
-
-
-
-
 
 
 
@@ -702,23 +710,26 @@ module Makr
     # the list is parsed in buildDependencies()
     # Parsing is seperated from dependency generation because during the update step we also check
     # dependencies but do no rebuild them as the tree should not be changed during multi-threaded update
+    # function return true, if successful, false otherwise
     def getDepsStringArrayFromCompiler()
       # always clear input lines upon call
       @dependencyLines = Array.new
+
       # then check, if we need to to
       if (@fileIsGenerated and (not File.file?(@fileName))) then
-        Makr.log.warn("generated file is missing: #{@fileName}")
-        return
+        Makr.log.error("generated file is missing: #{@fileName}")
+        return false
       end
+
       # now we check, if we also want system header deps
       unless @checkOnlyUserHeaders.is_a? NilClass then # the local variable overrides class variable if set
         checkOnlyUserHeaders = @checkOnlyUserHeaders
       else
         checkOnlyUserHeaders = @@checkOnlyUserHeaders
       end
-
       # system headers are excluded using compiler option "-MM", else "-M"
       depCommand = makeCompilerCallString() + ((checkOnlyUserHeaders)?" -MM ":" -M ") + @fileName
+
       Makr.log.info("Executing compiler to check for dependencies in CompileTask: \"" + @name + "\"\n\t" + depCommand)
       compilerPipe = IO.popen(depCommand)  # in ruby >= 1.9.2 we could use Open3.capture2(...) for this purpose
       @dependencyLines = compilerPipe.readlines
@@ -727,7 +738,9 @@ module Makr
         Makr.log.fatal( "error #{$?.exitstatus} in CompileTask for file \"" + @fileName +
                         "\" making dependencies failed, check file for syntax errors!")
         Makr.abortBuild()
+        return false # error case
       end
+      return true # success case
     end
 
 
@@ -774,29 +787,21 @@ module Makr
 
 
     def update()
-      # we first delete the target file so that upon miscompilation at least the @compileTargetDep wants an update
-      # the next time we run this script so that we can guarantee an update to the last state of the dependencies
-      File.delete @objectFileName rescue nil
-      @compileTargetDep.update() # we need to update the dep after deletion
-
       # we do not modify task structure on update and defer this to the postUpdate call like good little children
       @build.registerPostUpdate(self)
+
       # here we execute the compiler to deliver an update on the dependent includes before compilation. We could do this
       # in postUpdate, too, but we assume this to be faster, as the files should be in OS cache afterwards and
       # thus the compilation (which is the next step) should be faster
-      getDepsStringArrayFromCompiler()
+      return false if not getDepsStringArrayFromCompiler()
+
       # construct compiler command and execute it
       compileCommand = makeCompilerCallString() + " -c " + @fileName + " -o " + @objectFileName
-      Makr.log.info("CompileTask " + @name + ": Executing compiler\n\t" + compileCommand)
-      # TODO: check all system-calls for injections of malicious code (maybe better using an array for the arguments)
+      Makr.log.info("CompileTask #{@name}: Executing compiler\n\t" + compileCommand)
       successful = system(compileCommand)
-      if not successful then
-        Makr.log.fatal("CompileTask " + @name + ": compile error, exiting build process\n#####################\n\n")
-        Makr.abortBuild()
-      end
-      return @compileTargetDep.update() # we call this to update file information on the compiled target
-        # additionally this returns true, if the target was changed, and false otherwise what is what
-        # we want to propagate (which also is true for the abort case)
+      Makr.log.error("Error in CompileTask #{@name}") if not successful
+      @compileTargetDep.update() # update file information on the compiled target in any case
+      return successful
     end
 
 
@@ -819,7 +824,7 @@ module Makr
 
 
 
-  
+
   # TODO: there are some comonalities in the following classes, use mixins?
   #       (replacing "ProgramTask.makeName" with "self.class.makeName" for example)
 
@@ -921,11 +926,6 @@ module Makr
 
 
     def update()
-      # we first delete the target file so that upon miscompilation at least the @libTargetDep wants an update
-      # the next time we run this script so that we can guarantee an update to the last state of the dependencies
-      File.delete @libFileName rescue nil
-      @libTargetDep.update() # we need to update the dep after deletion
-
       # we always check for properly setup dependencies
       checkDependencyTasksForPIC()
       # build compiler command and execute it
@@ -934,15 +934,11 @@ module Makr
         # we only want dependencies that provide an object file
         linkCommand += " " + dep.objectFileName if (dep.respond_to?(:objectFileName) and dep.objectFileName)
       end
-      Makr.log.info("Building DynamicLibTask \"#{@name}\"\n\t" + linkCommand)
+      Makr.log.info("Building DynamicLibTask #{@name}\n\t" + linkCommand)
       successful = system(linkCommand)
-      if not successful then
-        Makr.log.fatal("linker error, exiting build process\n\n\n")
-        Makr.abortBuild()
-      end
-      return @libTargetDep.update() # we call this to update file information on the compiled target
-        # additionally this returns true, if the target was changed, and false otherwise what is what
-        # we want to propagate (which also is true for the abort case)
+      Makr.log.error("Error in DynamicLibTask #{@name}") if not successful
+      @libTargetDep.update() # update file information on the compiled target in any case
+      return successful
     end
 
 
@@ -1056,11 +1052,6 @@ module Makr
 
 
     def update()
-      # we first delete the target file so that upon miscompilation at least the @libTargetDep wants an update
-      # the next time we run this script so that we can guarantee an update to the last state of the dependencies
-      File.delete @libFileName rescue nil
-      @libTargetDep.update() # we need to update the dep after deletion
-
       # build compiler command and execute it
       linkCommand = makeLinkerCallString() + @libFileName
       @dependencies.each do |dep|
@@ -1069,13 +1060,9 @@ module Makr
       end
       Makr.log.info("Building StaticLibTask \"#{name}\"\n\t" + linkCommand)
       successful = system(linkCommand)
-      if not successful then
-        Makr.log.fatal("linker error, exiting build process\n\n\n")
-        Makr.abortBuild()
-      end
-      return @libTargetDep.update() # we call this to update file information on the compiled target
-        # additionally this returns true, if the target was changed, and false otherwise what is what
-        # we want to propagate (which also is true for the abort case)
+      Makr.log.error("Error in StaticLibTask #{@name}") if not successful
+      @libTargetDep.update() # update file information on the compiled target in any case
+      return successful
     end
 
 
@@ -1189,26 +1176,17 @@ module Makr
 
 
     def update()
-      # we first delete the target file so that upon miscompilation at least the @targetDep wants an update
-      # the next time we run this script so that we can guarantee an update to the last state of the dependencies
-      File.delete @programName rescue nil
-      @targetDep.update() # we need to update the dep after deletion
-
       # build compiler command and execute it
       linkCommand = makeLinkerCallString() + " -o " + @programName
       @dependencies.each do |dep|
         # we only want dependencies that provide an object file
         linkCommand += " " + dep.objectFileName if (dep.respond_to?(:objectFileName) and dep.objectFileName)
       end
-      Makr.log.info("Building programTask \"" + @name + "\"\n\t" + linkCommand)
+      Makr.log.info("Building ProgramTask \"" + @name + "\"\n\t" + linkCommand)
       successful = system(linkCommand)
-      if not successful then
-        Makr.log.fatal("linker error, exiting build process\n\n\n")
-        Makr.abortBuild()
-      end
-      return @targetDep.update() # we call this to update file information on the compiled target
-        # additionally this returns true, if the target was changed, and false otherwise what is what
-        # we want to propagate (which also is true for the abort case)
+      Makr.log.error("Error in ProgramTask #{@name}") if not successful
+      @targetDep.update() # update file information on the compiled target in any case
+      return successful
     end
 
 
@@ -1260,6 +1238,8 @@ module Makr
     # hash from a file name to an Array of Task s (this is a kind of convenience member, see buildTasksForFile). It can
     # be used to realize the build of a single file provided by many IDEs)
     attr_accessor :fileHash
+    # set this to true, if build should stop on first detected error (default behaviour)
+    attr_accessor :stopOnFirstError
 
 
     # build path identifies the build directory where the cache of configs and tasks is stored in a
@@ -1275,6 +1255,8 @@ module Makr
       @taskHash      = Hash.new            # maps task names to tasks (names are for example full path file names)
       @taskHashCache = Hash.new            # a cache for the task hash that is loaded below
       @fileHash = Hash.new                 # convenience member, see above
+
+      @stopOnFirstError = true
 
       @configs = Hash.new
 
@@ -1299,11 +1281,11 @@ module Makr
     def build(task = nil)
       updateTraverser = UpdateTraverser.new(@nrOfThreads)
       if task then
-        updateTraverser.traverse(task)
+        updateTraverser.traverse(task, @stopOnFirstError)
       else
         # check default task or search for a single task without dependant tasks (but give warning)
         if @defaultTask.kind_of? Task then
-          updateTraverser.traverse(@defaultTask)
+          updateTraverser.traverse(@defaultTask, @stopOnFirstError)
         else
           Makr.log.warn("no (default) task given for build, searching for root task")
           taskFound = @taskHash.values.select {|v| v.dependantTasks.empty?}
@@ -1311,14 +1293,14 @@ module Makr
             if taskFound.size > 1 then
               Makr.log.warn("more than one root task found, taking the first found, which is: " + taskFound.first.name)
             end
-            updateTraverser.traverse(taskFound.first)
+            updateTraverser.traverse(taskFound.first, @stopOnFirstError)
           else
             raise "failed with all fallbacks in Build.build"
           end
         end
       end
       # finally give message:
-      if not UpdateTraverser.abortUpdate
+      if not UpdateTraverser.abortBuild
         Makr.log.info("\n")
         Makr.log.info("\n")
         Makr.log.info("############ successfully build task ############")
@@ -1570,12 +1552,12 @@ module Makr
   class UpdateTraverser
 
     # this class variable is used to realize cooperative build abort, see Makr::abortBuild()
-    @@abortUpdate = false
-    def UpdateTraverser.abortUpdate
-      @@abortUpdate
+    @@abortBuild = false
+    def UpdateTraverser.abortBuild
+      @@abortBuild
     end
-    def UpdateTraverser.abortUpdate=(arg)
-      @@abortUpdate = arg
+    def UpdateTraverser.abortBuild=(arg)
+      @@abortBuild = arg
     end
 
     # we use this to provide a countdown functionality for a parallel build in the log output
@@ -1601,46 +1583,59 @@ module Makr
         @threadPool = threadPool
       end
 
+      def collectChildState(task) # returns empty string if task has no childs
+        retString = String.new
+        task.dependencies.each do |dep|
+          retString += dep.state
+        end
+        return retString
+      end
 
       # we need to go up the tree with the traversal even in case dependency did not update
       # just to increase the dependenciesUpdatedCount in each marked node so that in case
       # of the update of a single (sub-)child, the node will surely be updated! An intermediate node up to the root
       # might not be updated, as the argument callUpdate is false, but the algorithm logic
       # still needs to handle dependant tasks for the above reason.
-      def run(callUpdate)
-        return if UpdateTraverser.abortUpdate # cooperatively abort build
+      def run()
+        return if UpdateTraverser.abortBuild # cooperatively abort build
 
         @task.mutex.synchronize do
-          if not @task.updateMark then
-            raise "[makr] Unexpectedly starting on a task that needs no update!"
-          end
+          raise "[makr] Unexpectedly starting on a task that needs no update!" if not @task.updateMark # some sanity check
+
           # as we will have done a task (wether it was updated or not doesnt matter), we want to decrease the timeToBuildDownRemaining
           # we scale by the nrOfThreads employed (ok, this is not a linear speedup, but close to it)
           UpdateTraverser.timeToBuildDownRemaining -= @task.updateDuration / @threadPool.nrOfThreads
-          retVal = false
-          if callUpdate then
+
+          childState = collectChildState(@task)
+          successfulUpdate = true
+          if @task.dependencies.empty? or (childState != @task.state) then # do we need to update?
+            # we update expected duration when task is updated, so that only the last measured time is used the next time
             t1 = Time.now
-            retVal = @task.update()
-            @task.updateDuration = (Time.now - t1) # update expected duration when task is updated
+            successfulUpdate = @task.update()
+            @task.updateDuration = (Time.now - t1)
+            # we only set child state on inner nodes and if the update was successful (leaf nodes set their state themselves)
+            @task.state = childState if successfulUpdate and (not @task.dependencies.empty?)
           end
-          return if UpdateTraverser.abortUpdate # cooperatively abort build (inserted here again for faster reaction)
+          if ((not successfulUpdate) and @stopOnFirstError) then
+            puts "build error"
+            UpdateTraverser.abortBuild = true
+            puts "set abort"
+          end
+          return if UpdateTraverser.abortBuild # cooperatively abort build (inserted here again for faster reaction)
           @task.updateMark = false
           @task.dependantTasks.each do |dependantTask|
             dependantTask.mutex.synchronize do
-              if dependantTask.updateMark then # only work on dependant tasks that want to be updated eventually
-                dependantTask.dependencyWasUpdated ||= retVal
-                # if we are the last thread to reach the dependant task, we will run the next thread
-                # on it. The dependant task needs to be updated if at least a single dependency task
-                # was update (which may not be the task of this thread)
+              if dependantTask.updateMark then # only work on dependant tasks that want to be updated
+                # if we are the last thread to reach the dependant task, we will run the next thread on it
                 dependantTask.dependenciesUpdatedCount = dependantTask.dependenciesUpdatedCount + 1
                 if (dependantTask.dependenciesUpdatedCount == dependantTask.dependencies.size) then
                   updater = Updater.new(dependantTask, @threadPool)
-                  @threadPool.execute {updater.run(dependantTask.dependencyWasUpdated)}
+                  @threadPool.execute {updater.run()}
                 end
               end
             end
           end
-        end  
+        end
       end
 
     end # end of nested class Updater
@@ -1657,7 +1652,8 @@ module Makr
     # of threads is limited by a thread pool.
     #
     # TODO: We expect the DAG to have no cycles here. Should we check?
-    def traverse(root)
+    def traverse(root, stopOnFirstError)
+      @stopOnFirstError = stopOnFirstError
       # reset the count that represents the nr of tasks that are affected by this update
       @@timeToBuildDownRemaining = 0.0
       collectedTasksWithNoDeps = Array.new
@@ -1666,7 +1662,7 @@ module Makr
       Makr.log.debug("collectedTasksWithNoDeps.size: " + collectedTasksWithNoDeps.size.to_s)
       collectedTasksWithNoDeps.each do |noDepsTask|
         updater = Updater.new(noDepsTask, @threadPool)
-        @threadPool.execute {updater.run(true)}
+        @threadPool.execute {updater.run()}
       end
       @threadPool.join()
     end
@@ -1678,7 +1674,6 @@ module Makr
       # prepare the task variables upon descend
       task.updateMark = true
       task.dependenciesUpdatedCount = 0
-      task.dependencyWasUpdated = false
       # each task that we mark gets touched by Updater, so we increase timeToBuildDownRemaining by the
       # number of seconds estimated in previous builds (see Updater.run)
       # we scale by the nrOfThreads employed (ok, this is not a linear speedup, but close to it)
@@ -1713,12 +1708,14 @@ module Makr
   # TODO: explain why find-module from ruby was not used
   class FileCollector
 
+
     # dirName is expected to be a path name, pattern could be "*" or "*.cpp" or "*.{cpp,cxx,CPP}", etc.
     def FileCollector.collect(dirName, pattern = "*", recurse = true)
       fileCollection = Array.new
       privateCollect(dirName, pattern, nil, fileCollection, recurse)  # exclusion pattern is empty
       return fileCollection
     end
+
 
     # convenience methods
     def FileCollector.collectRecursive(dirName, pattern = "*")
@@ -1728,6 +1725,7 @@ module Makr
       return FileCollector.collect(dirName, pattern, false)
     end
 
+
     # additional collector with exclusion pattern given
     def FileCollector.collectExclude(dirName, pattern, exclusionPattern, recurse = true)
       fileCollection = Array.new
@@ -1735,9 +1733,14 @@ module Makr
       return fileCollection
     end
 
-    protected
+
+  protected
+
 
     def FileCollector.privateCollect(dirName, pattern, exclusionPattern, fileCollection, recurse)
+
+      return if UpdateTraverser.abortBuild # check if build was aborted before proceeding
+
       Makr.cleanPathName(dirName)
       # first recurse into sub directories
       if recurse then
@@ -1755,6 +1758,7 @@ module Makr
         fileCollection.concat(Dir[ dirName + "/" + pattern ])
       end
     end
+
   end
 
 
@@ -1813,9 +1817,9 @@ module Makr
     tasks = Array.new
     fileCollection.each do |fileName|
       generatorArray.each do |gen|
-        return tasks if UpdateTraverser.abortUpdate # cooperatively abort build
+        return tasks if UpdateTraverser.abortBuild # cooperatively abort build
         genTasks = gen.generate(fileName)
-        tasks.concat(genTasks)        
+        tasks.concat(genTasks)
       end
     end
     return tasks
@@ -1864,7 +1868,7 @@ module Makr
 
   def Makr.popArgs()
     if (ScriptArgumentsStorage.get.size < 2) then
-      Makr.log.fatal "Tried to remove the minimum arguments from stack, exiting!"
+      Makr.log.fatal("In Makr.popArgs(): tried to remove the last arguments from stack, exiting!")
       Makr.abortBuild()
     end
     ScriptArgumentsStorage.get.pop
@@ -1885,6 +1889,7 @@ module Makr
 
   # loads a Makrfile.rb from the given dir and executes it using Kernel.load and push/pops the current ScriptArguments, so that they are save
   def Makr.makeDir(dir)
+    return if UpdateTraverser.abortBuild # check if build was aborted before proceeding
     Makr.cleanPathName(dir)
     oldDir = Dir.pwd
     Dir.chdir(dir)
@@ -1894,7 +1899,7 @@ module Makr
       Kernel.load(makrFilePath, true)  # second parameter sayz to wrap an anonymous module around the called script content
       popArgs()
     else
-      Makr.log.error("Cannot find Makrfile-Path " + makrFilePath + " from current working dir " + Dir.pwd + "!")
+      Makr.log.fatal("Cannot find Makrfile-Path " + makrFilePath + " from current working dir " + Dir.pwd + "!")
       Makr.abortBuild()
     end
     Dir.chdir(oldDir)
@@ -1904,52 +1909,7 @@ module Makr
 
 
 
-
-
-
-
-
-  
-
-
-
-  # Convenience class related to Config adding compiler flags (Config key "compiler.cFlags") and
-  # options related to a lib using pkg-config.
-  class PkgConfig
-
-    # cflags to config
-    def self.addCFlags(config, pkgName)
-      config.addUnique("compiler.cFlags", " " + (`pkg-config --cflags #{pkgName}`).strip!)
-    end
-
-
-    # add libs to config
-    def self.addLibs(config, pkgName, static = false)
-      command = "pkg-config --libs " + ((static)? " --static ":"") + pkgName
-      config.addUnique("linker.lFlags", " " + (`#{command}`).strip!)
-    end
-
-
-    # add libs and cflags to config
-    def self.add(config, pkgName)
-      PkgConfig.addCFlags(config, pkgName)
-      PkgConfig.addLibs(config, pkgName)
-    end
-
-
-    def self.getAllLibs()
-      list = `pkg-config --list-all`
-      hash = Hash.new
-      list.each_line do |line|
-        splitArr = line.split ' ', 2 # only split at the first space
-        hash[splitArr.first] = splitArr.last
-      end
-      return hash
-    end
-  end
-
-
-
+  # very simple extension system (plugin system)
   def Makr.loadExtension(exName)
     Kernel.load($makrExtensionsDir + "/" + exName + ".rb")
   end
@@ -2002,16 +1962,6 @@ $makrExtensionsDir = $makrDir + "/extensions"
 Makr.pushArgs(Makr::ScriptArguments.new("./Makrfile.rb", ARGV))
 # then we reuse the makeDir functionality building the current directory
 Makr.makeDir(".")
-
-
-
-
-
-
-
-
-
-
 
 
 

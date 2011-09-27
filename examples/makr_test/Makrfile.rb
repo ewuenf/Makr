@@ -4,6 +4,7 @@
 
 # first load needed extensions
 Makr.loadExtension("Qt")
+Makr.loadExtension("pkg-config")
 
 
 # then decompose arguments
