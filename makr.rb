@@ -164,11 +164,10 @@ module Makr
 
 
 
-  # central aborting method. TODO the concept does not seem final
+  # central aborting method (cooperative abort, see UpdateTraverser::Updater)
   def Makr.abortBuild()
     Makr.log.fatal("Aborting build process.")
-    UpdateTraverser.abortBuild = true # cooperative abort
-    # Kernel.exit! 1  did not work as expected
+    UpdateTraverser.abortBuild = true
   end
 
 
@@ -268,7 +267,7 @@ module Makr
       #    * we have do not have the key
       #      * we have no parent and return nil
       #      * we have a parent and recursively check for the key
-      @hash[key] or (@parent ? @parent[key] : nil) # TODO: return empty string instead of nil ?
+      @hash[key] or (@parent ? @parent[key] : nil)
     end
 
 
@@ -1714,7 +1713,8 @@ module Makr
 
 
   # Helps collecting files given directories and patterns. All methods are static.
-  # TODO: explain why find-module from ruby was not used
+  # I did not use find from ruby standard library, as I needed more flexibility (patterns,
+  # non-recursive directory lists, etc.)
   class FileCollector
 
 
@@ -1962,7 +1962,16 @@ Signal.trap("TERM", abort_handler)
 
 # for the following variable, we care for symlinks only, hardlinks will go wrong
 # (TODO: maybe we need an environment var here or something hardcoded in this file?)
-$makrDir = (File.symlink?(__FILE__))?File.dirname(File.readlink(__FILE__)):File.dirname(__FILE__)
+unless File.symlink?(__FILE__) then
+  $makrDir = File.dirname(__FILE__)
+else
+  makrLinkPath = File.readlink(__FILE__) # makrLinkPath can be absolute or relative!
+  if makrLinkPath.index('/') == 0 then
+    $makrDir = makrLinkPath
+  else
+    $makrDir = File.dirname(__FILE__) + makrLinkPath
+  end
+end
 $makrExtensionsDir = $makrDir + "/extensions"
 
 
