@@ -1969,7 +1969,7 @@ else
   if makrLinkPath.index('/') == 0 then
     $makrDir = makrLinkPath
   else
-    $makrDir = File.dirname(__FILE__) + makrLinkPath
+    $makrDir = File.dirname(__FILE__) + "/" + File.dirname(makrLinkPath)
   end
 end
 $makrExtensionsDir = $makrDir + "/extensions"
