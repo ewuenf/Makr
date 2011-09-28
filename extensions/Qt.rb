@@ -276,6 +276,7 @@ module Makr
         @uicTargetDep = @build.getTask(@uicFileName)
       end
       addDependency(@uicTargetDep)
+      @targets = [@uicFileName]
 
       # now add another dep on the config
       @configTaskName = ConfigTask.makeName(@name)

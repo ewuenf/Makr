@@ -333,8 +333,9 @@ module Makr
     attr_reader :targets
     # reference to Config object
     attr_accessor :config
-    # these are used by the multi-threaded UpdateTraverser
-    attr_accessor :mutex, :updateMark, :dependenciesUpdatedCount, :updateDuration
+    # these are used by the multi-threaded UpdateTraverser (most of these are related to update() and postUpdate(),
+    # errorOccuredInDependencies is related to handleUpdateError() )
+    attr_accessor :mutex, :updateMark, :dependenciesUpdatedCount, :updateDuration, :errorOccuredInDependencies
     # state determines for inner nodes of the task graph, if an update is necessary:
     # for leaf nodes the state must be set by the nodes upon call to the update() function, while
     # for inner nodes, the state is set by UpdateTraverser::Updater to match an accumulation
@@ -355,6 +356,7 @@ module Makr
       @updateMark = false
       @dependenciesUpdatedCount = 0
       @updateDuration = 1.0
+      @errorOccuredInDependencies = false
 
       @state = @accumulatedChildState = String.new
     end
@@ -424,6 +426,22 @@ module Makr
     end
 
 
+    # this is called if upon update of a dependency (or a dependency of a dependency...) an error occurred
+    def handleUpdateError()
+      deleteTargets()
+    end
+
+
+    def deleteTargets()
+      return if not @targets
+      @targets.each do |target|
+        File.delete target if File.exists? target
+      end
+    end
+
+    alias :deleteTargetsBeforeUpdate :deleteTargets # see UpdateTraverser::Updater::run()
+    
+
     # can be impletemented by subclasses indicating that this task is no longer valid due to for example a missing file
     def mustBeDeleted?()
       false
@@ -440,6 +458,7 @@ module Makr
 
 
     def cleanupBeforeDeletion()  # interface mainly for tasks generating targets (removing these)
+      deleteTargets()
     end
 
   end
@@ -775,7 +794,7 @@ module Makr
           if not @dependencies.include?(task)
             addDependency(task)
           end
-        elsif (generatorTask = @build.getTasksForTarget(depFile)) then
+        elsif (generatorTask = @build.getTaskForTarget(depFile)) then
           if not @dependencies.include?(generatorTask)
             addDependency(generatorTask)
           end
@@ -794,13 +813,13 @@ module Makr
 
 
     def update()
-      # we do not modify task structure on update and defer this to the postUpdate call like good little children
-      @build.registerPostUpdate(self)
-
       # here we execute the compiler to deliver an update on the dependent includes before compilation. We could do this
       # in postUpdate, too, but we assume this to be faster, as the files should be in OS cache afterwards and
       # thus the compilation (which is the next step) should be faster
       return false if not getDepsStringArrayFromCompiler()
+
+      # we do not modify task structure on update and defer this to the postUpdate call like good little children
+      @build.registerPostUpdate(self)
 
       # construct compiler command and execute it
       compileCommand = makeCompilerCallString() + " -c " + @fileName + " -o " + @objectFileName
@@ -814,12 +833,6 @@ module Makr
 
     def postUpdate()
       buildDependencies()  # assuming we have called the compiler already in update giving us the deps strings
-    end
-
-
-    # before this task gets deleted, we remove the object file
-    def cleanupBeforeDeletion()
-      File.delete @objectFileName	rescue nil
     end
 
   end
@@ -950,10 +963,6 @@ module Makr
       return successful
     end
 
-
-    def cleanupBeforeDeletion()
-      File.delete @libFileName	rescue nil
-    end
   end
 
 
@@ -1076,10 +1085,6 @@ module Makr
       return successful
     end
 
-
-    def cleanupBeforeDeletion()
-      File.delete @libFileName rescue nil
-    end
   end
 
 
@@ -1200,11 +1205,6 @@ module Makr
       Makr.log.error("Error in ProgramTask #{@name}") if not successful
       @targetDep.update() # update file information on the compiled target in any case
       return successful
-    end
-
-
-    def cleanupBeforeDeletion()
-      File.delete @programName rescue nil
     end
 
   end
@@ -1385,10 +1385,11 @@ module Makr
     end
 
 
-    def searchTaskForTarget(fileName)
+    def getTaskForTarget(fileName)
       @taskHash.each_value do |task|
-        return task if task.targets.include?(fileName)
+        return task if (task.targets and task.targets.include?(fileName))
       end
+      nil
     end
 
 
@@ -1620,50 +1621,69 @@ module Makr
         return retString
       end
 
-      # we need to go up the tree with the traversal even in case dependency did not update
+      # we need to go up the tree with the traversal even in case dependency did not update or had an error upon update
       # just to increase the dependenciesUpdatedCount in each marked node so that in case
-      # of the update of a single (sub-)child, the node will surely be updated! An intermediate node up to the root
-      # might not be updated, as the argument callUpdate is false, but the algorithm logic
+      # of the update of a single (sub-)child, the node will surely be updated or an update error is handled!
+      # An intermediate node up to the root might not be updated, as it need not, but the algorithm logic
       # still needs to handle dependant tasks for the above reason.
       def run()
-        return if UpdateTraverser.abortBuild # cooperatively abort build
-
         @task.mutex.synchronize do
           raise "[makr] Unexpectedly starting on a task that needs no update!" if not @task.updateMark # some sanity check
+          @task.updateMark = false
+          daDoRunRunRun() # see immediately below
+        end
+      end
 
-          # as we will have done a task (wether it was updated or not doesnt matter), we want to decrease the timeToBuildDownRemaining
-          # we scale by the nrOfThreads employed (ok, this is not a linear speedup, but close to it)
-          UpdateTraverser.timeToBuildDownRemaining -= @task.updateDuration / @threadPool.nrOfThreads
+      def daDoRunRunRun()
+        # as we will have done a task (wether it was updated or not doesnt matter), we want to decrease the timeToBuildDownRemaining
+        # we scale by the nrOfThreads employed (ok, this is not a linear speedup, but close to it)
+        UpdateTraverser.timeToBuildDownRemaining -= @task.updateDuration / @threadPool.nrOfThreads
+
+        if @task.errorOccuredInDependencies then
+
+          @task.handleUpdateError()
+          @task.dependantTasks.each do |dependantTask|
+            dependantTask.errorOccuredInDependencies = true if dependantTask.updateMark
+          end
+
+        else
 
           childState = collectChildState(@task)
-          if @task.dependencies.empty? or (childState != @task.state) then # do we need to update?
+          # do we need to update?
+          if (@task.dependencies.empty? or (childState != @task.state)) and not UpdateTraverser.abortBuild then
             # we update expected duration when task is updated, so that only the last measured time is used the next time
             t1 = Time.now
+            # we always delete targets before update, Task classes that do not want this, should overwrite the function
+            @task.deleteTargetsBeforeUpdate()
             successfulUpdate = @task.update()
             @task.updateDuration = (Time.now - t1)
-            # we only set child state on inner nodes and if the update was successful (leaf nodes set their state themselves)
-            if successfulUpdate and (not @task.dependencies.empty?) then
-              @task.state = collectChildState(@task)
-            end
-            if ((not successfulUpdate) and @stopOnFirstError) then
-              UpdateTraverser.abortBuild = true
+
+            if not successfulUpdate then
+              @task.dependantTasks.each do |dependantTask|
+                dependantTask.errorOccuredInDependencies = true if dependantTask.updateMark
+              end
+              UpdateTraverser.abortBuild = true if @stopOnFirstError
+            else
+              # we only set child state on inner nodes and if the update was successful (leaf nodes set their state themselves)
+              @task.state = collectChildState(@task) if (not @task.dependencies.empty?)
             end
           end
-          return if UpdateTraverser.abortBuild # cooperatively abort build (inserted here again for faster reaction)
-          @task.updateMark = false
-          @task.dependantTasks.each do |dependantTask|
-            dependantTask.mutex.synchronize do
-              if dependantTask.updateMark then # only work on dependant tasks that want to be updated
-                # if we are the last thread to reach the dependant task, we will run the next thread on it
-                dependantTask.dependenciesUpdatedCount = dependantTask.dependenciesUpdatedCount + 1
-                if (dependantTask.dependenciesUpdatedCount == dependantTask.dependencies.size) then
-                  updater = Updater.new(dependantTask, @threadPool, @stopOnFirstError)
-                  @threadPool.execute {updater.run()}
-                end
+
+        end
+
+        @task.dependantTasks.each do |dependantTask|
+          dependantTask.mutex.synchronize do
+            if dependantTask.updateMark then # only work on dependant tasks that want to be updated
+              # if we are the last thread to reach the dependant task, we will run the next thread on it
+              dependantTask.dependenciesUpdatedCount = dependantTask.dependenciesUpdatedCount + 1
+              if (dependantTask.dependenciesUpdatedCount == dependantTask.dependencies.size) then
+                updater = Updater.new(dependantTask, @threadPool, @stopOnFirstError)
+                @threadPool.execute {updater.run()}
               end
             end
           end
         end
+
       end
 
     end # end of nested class Updater
@@ -1703,6 +1723,7 @@ module Makr
       # prepare the task variables upon descend
       task.updateMark = true
       task.dependenciesUpdatedCount = 0
+      task.errorOccuredInDependencies = false
       # each task that we mark gets touched by Updater, so we increase timeToBuildDownRemaining by the
       # number of seconds estimated in previous builds (see Updater.run)
       # we scale by the nrOfThreads employed (ok, this is not a linear speedup, but close to it)
@@ -1968,7 +1989,7 @@ Makr.log.level = Logger::DEBUG
 Makr.log.formatter = proc { |severity, datetime, progname, msg|
     "[makr #{severity} #{datetime}] [#{Makr::UpdateTraverser.timeToBuildDownRemaining}]    #{msg}\n"
 }
-Makr.log << "\n\nmakr version 1.0\n\n"  # just give short version notice on every startup
+Makr.log << "\n\nmakr version 1.1\n\n"  # just give short version notice on every startup
 
 # then set the signal handler to allow cooperative aborting of the build process on SIGUSR1 or SIGTERM
 abort_handler = Proc.new do
@@ -2001,3 +2022,4 @@ $makrExtensionsDir = $makrDir + "/extensions"
 Makr.pushArgs(Makr::ScriptArguments.new("./Makrfile.rb", ARGV))
 # then we reuse the makeDir functionality building the current directory
 Makr.makeDir(".")
+
