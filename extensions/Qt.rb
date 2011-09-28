@@ -60,7 +60,8 @@ module Makr
         prefix = @config["moc.filePrefix"] if (@config["moc.filePrefix"])
         suffix = @config["moc.fileSuffix"] if (@config["moc.fileSuffix"])
       end
-      @build.buildPath + "/" + prefix + fileName.gsub('/', '_').gsub('.', '_') + suffix
+      # double substitution of underscores to prevent name conflicts
+      @build.buildPath + "/" + prefix + fileName.gsub('_', '__').gsub('/', '_').gsub('.', '_') + suffix
     end
 
 
@@ -91,6 +92,8 @@ module Makr
         @mocTargetDep = @build.getTask(@mocFileName)
       end
       addDependency(@mocTargetDep)
+      @targets = [@mocFileName]
+
       # now add another dep on the config
       @configTaskName = ConfigTask.makeName(@name)
       if not @build.hasTask?(@configTaskName) then
@@ -180,6 +183,181 @@ module Makr
         compileTask.config = @compileTaskConfig
       end
       tasks.push(compileTask)
+      # now fill fileHash
+      @build.fileHash[fileName] ||= Array.new
+      @build.fileHash[fileName].concat(tasks)
+      @build.fileHash[fileName].uniq!
+      return tasks
+    end
+
+  end
+
+
+
+
+
+
+
+
+
+  ##################################  Uic things
+
+
+
+
+
+
+
+
+
+
+  # Represents a task executing the "uic" code generator from "Qt".
+  class UicTask < Task
+
+    # input file
+    attr_reader :fileName
+    # output file
+    attr_reader :uicFileName
+
+
+    # make a unique name for a MocTask out of the given fileName
+    def UicTask.makeName(uicFileName)
+      "UicTask__" + uicFileName
+    end
+
+
+    # constructing the string to call the moc out of the given config (or default values)
+    def makeUicCallString()
+      callString = String.new
+      if @config then
+        Makr.log.debug("UicTask " + @name + ": config name is: \"" + @config.name + "\"")
+        if (not @config["uic"]) then
+          Makr.log.warn("UicTask " + @name + ": no uic binary given, using uic in path")
+          callString = "uic "
+        else
+          callString = @config["uic"] + " "
+        end
+        callString += @config["uic.flags"] + " " if @config["uic.flags"] # add other options
+      else
+        Makr.log.warn("UicTask " + @name + ": no config given, using default bare uic")
+        callString = "uic "
+      end
+      return callString
+    end
+
+    alias :getConfigString :makeUicCallString
+
+
+    # The options accepted in the Config referenced by config could be "moc" and "moc.flags"
+    # (see also function makeMocCallString() )
+    def initialize(fileName, build, config = nil)
+      @fileName = Makr.cleanPathName(fileName)
+      # now we need a unique name for this task, as we're defining a FileTask as dependency to @fileName
+      super(UicTask.makeName(@fileName), config)
+      @build = build
+
+      @uicFileName = @fileName + ".h"  # use simple header file extension as it is included in other files
+      @targets = [@uicFileName]
+
+      # first we need a dep on the input file
+      if not @build.hasTask?(@fileName) then
+        @inputFileDep = FileTask.new(@fileName)
+        @build.addTask(@fileName, @inputFileDep)
+      else
+        @inputFileDep = @build.getTask(@fileName)
+      end
+      addDependency(@inputFileDep)
+
+      # now add a dep on the output file
+      if not @build.hasTask?(@uicFileName) then
+        @uicTargetDep = FileTask.new(@uicFileName, false)
+        @build.addTask(@uicFileName, @uicTargetDep)
+      else
+        @uicTargetDep = @build.getTask(@uicFileName)
+      end
+      addDependency(@uicTargetDep)
+
+      # now add another dep on the config
+      @configTaskName = ConfigTask.makeName(@name)
+      if not @build.hasTask?(@configTaskName) then
+        @configDep = ConfigTask.new(@configTaskName)
+        @build.addTask(@configTaskName, @configDep)
+      else
+        @configDep = @build.getTask(@configTaskName)
+      end
+      addDependency(@configDep)
+
+      Makr.log.debug("made UicTask with @name=\"" + @name + "\"")
+    end
+
+
+    def update()
+      # construct compiler command and execute it
+      uicCommand = makeUicCallString() + " -o " + @uicFileName + " " + @fileName
+      Makr.log.info("Executing uic in UicTask: \"" + @name + "\"\n\t" + uicCommand)
+      successful = system(uicCommand)
+      Makr.log.error("Error in UicTask #{@name}") if not successful
+      @uicTargetDep.update() # update file information on the compiled target in any case
+      return successful
+    end
+
+
+    # this task wants to be deleted if the file no longer contains the Q_OBJECT macro (TODO is this correct?)
+    def mustBeDeleted?()
+      return (not File.exists?(@fileName))
+    end
+
+
+    # remove possibly remaining generated mocced file before deletion
+    def cleanupBeforeDeletion()
+      File.delete @uicFileName rescue nil
+    end
+
+  end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  # Produces a UicTask for every fileName given
+  class UicTaskGenerator
+
+    def initialize(build, uicTaskConfig = nil)
+      @build = build
+      @uicTaskConfig = uicTaskConfig
+    end
+
+
+    def generate(fileName)
+      return Array.new if not fileName.rindex(".ui")  # TODO: maybe we want to check for the xml code inside
+
+      Makr.cleanPathName(fileName)
+      uicTaskName = UicTask.makeName(fileName)
+      if not @build.hasTask?(uicTaskName) then
+        uicTask = UicTask.new(fileName, @build, @uicTaskConfig)
+        @build.addTask(uicTaskName, uicTask)
+      end
+      uicTask = @build.getTask(uicTaskName)
+      # care for changed configName when config is from cache
+      if uicTask.config != @uicTaskConfig then
+        Makr.log.debug( "configName has changed in task " + uicTask.name + \
+                       " compared to cached version, setting to new value: " + @uicTaskConfig.name)
+        uicTask.config = @uicTaskConfig
+      end
+      tasks = [uicTask]
       # now fill fileHash
       @build.fileHash[fileName] ||= Array.new
       @build.fileHash[fileName].concat(tasks)

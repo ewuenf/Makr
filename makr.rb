@@ -328,6 +328,9 @@ module Makr
     # dependencies are of course tasks this task depends on. Additionally we have the array of
     # dependantTask that depend on this task (double-linked graph structure)
     attr_reader :name, :dependencies, :dependantTasks
+    # targets is an Array of file names containing the targets produced by the task (may be empty if no files are produced)
+    # this can be used to resolve dependencies on generated files
+    attr_reader :targets
     # reference to Config object
     attr_accessor :config
     # these are used by the multi-threaded UpdateTraverser
@@ -687,6 +690,7 @@ module Makr
       else
         @compileTargetDep = @build.getTask(@objectFileName)
       end
+      @targets = [@objectFileName] # set targets produced by this task
 
       # construct a dependency task on the configuration
       @configTaskDepName = ConfigTask.makeName(@name)
@@ -770,6 +774,10 @@ module Makr
           task = @build.getTask(depFile)
           if not @dependencies.include?(task)
             addDependency(task)
+          end
+        elsif (generatorTask = @build.getTasksForTarget(depFile)) then
+          if not @dependencies.include?(generatorTask)
+            addDependency(generatorTask)
           end
         else
           task = FileTask.new(depFile)
@@ -910,6 +918,8 @@ module Makr
         @libTargetDep = @build.getTask(@libFileName)
       end
       addDependency(@libTargetDep)
+      @targets = [@libFileName]
+
       # now add another dependency task on the config
       @configDepName = ConfigTask.makeName(@libFileName)
       if not @build.hasTask?(@configDepName) then
@@ -1036,6 +1046,8 @@ module Makr
         @libTargetDep = @build.getTask(@libFileName)
       end
       addDependency(@libTargetDep)
+      @targets = [@libFileName]
+
       # now add another dependency task on the config
       @configDepName = ConfigTask.makeName(@libFileName)
       if not @build.hasTask?(@configDepName) then
@@ -1160,6 +1172,8 @@ module Makr
         @targetDep = @build.getTask(@programName)
       end
       addDependency(@targetDep)
+      @targets = [@programName]
+
       # now add another dependency task on the config
       @configDepName = ConfigTask.makeName(@programName)
       if not @build.hasTask?(@configDepName) then
@@ -1367,6 +1381,13 @@ module Makr
         @taskHash.delete(taskName)
       else
         raise "[makr] removal of non-existant task requested!"
+      end
+    end
+
+
+    def searchTaskForTarget(fileName)
+      @taskHash.each_value do |task|
+        return task if task.targets.include?(fileName)
       end
     end
 
@@ -1980,6 +2001,3 @@ $makrExtensionsDir = $makrDir + "/extensions"
 Makr.pushArgs(Makr::ScriptArguments.new("./Makrfile.rb", ARGV))
 # then we reuse the makeDir functionality building the current directory
 Makr.makeDir(".")
-
-
-
