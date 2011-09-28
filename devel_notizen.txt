@@ -8,7 +8,5 @@ Was passiert, wenn ein Unterscript beendet wird mit exit?
 TODO:
 *****
 
-bei build-fehlern das default-target löschen oder das aktuelle build-target?
-  related: build.errorState einführen und setzen
 Beispiele aufsplitten oder alle Möglichkeiten in einem großem Beispiel-Makrfile (oder beides ;-) )
 Unterprojekte möglichst abgetrennt und testen!!

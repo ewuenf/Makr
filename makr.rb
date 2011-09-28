@@ -334,8 +334,8 @@ module Makr
     # reference to Config object
     attr_accessor :config
     # these are used by the multi-threaded UpdateTraverser (most of these are related to update() and postUpdate(),
-    # errorOccuredInDependencies is related to handleUpdateError() )
-    attr_accessor :mutex, :updateMark, :dependenciesUpdatedCount, :updateDuration, :errorOccuredInDependencies
+    # updateError is related to handleUpdateError() )
+    attr_accessor :mutex, :updateMark, :dependenciesUpdatedCount, :updateDuration, :updateError
     # state determines for inner nodes of the task graph, if an update is necessary:
     # for leaf nodes the state must be set by the nodes upon call to the update() function, while
     # for inner nodes, the state is set by UpdateTraverser::Updater to match an accumulation
@@ -356,7 +356,7 @@ module Makr
       @updateMark = false
       @dependenciesUpdatedCount = 0
       @updateDuration = 1.0
-      @errorOccuredInDependencies = false
+      @updateError = false
 
       @state = @accumulatedChildState = String.new
     end
@@ -1253,6 +1253,8 @@ module Makr
     attr_accessor :fileHash
     # set this to true, if build should stop on first detected error (default behaviour)
     attr_accessor :stopOnFirstError
+    # this is set to true if an error occured during the last build
+    attr_reader :buildError
 
 
     # build path identifies the build directory where the cache of configs and tasks is stored in a
@@ -1270,6 +1272,7 @@ module Makr
       @fileHash = Hash.new                 # convenience member, see above
 
       @stopOnFirstError = true
+      @buildError = false
 
       @configs = Hash.new
 
@@ -1292,13 +1295,16 @@ module Makr
     # The variable nrOfThreads influences, how many threads perform the update. If
     # no number is given, the number of available processors is used (see ThreadPool).
     def build(task = nil)
+      @buildError = false
       updateTraverser = UpdateTraverser.new(@nrOfThreads)
       if task then
         updateTraverser.traverse(self, task, @stopOnFirstError)
+        @buildError = task.updateError
       else
         # check default task or search for a single task without dependant tasks (but give warning)
         if @defaultTask.kind_of? Task then
           updateTraverser.traverse(self, @defaultTask, @stopOnFirstError)
+          @buildError = @defaultTask.updateError
         else
           Makr.log.warn("no (default) task given for build, searching for root task")
           taskFound = @taskHash.values.select {|v| v.dependantTasks.empty?}
@@ -1307,6 +1313,7 @@ module Makr
               Makr.log.warn("more than one root task found, taking the first found, which is: " + taskFound.first.name)
             end
             updateTraverser.traverse(self, taskFound.first, @stopOnFirstError)
+            @buildError = taskFound.first.updateError
           else
             raise "failed with all fallbacks in Build.build"
           end
@@ -1639,11 +1646,11 @@ module Makr
         # we scale by the nrOfThreads employed (ok, this is not a linear speedup, but close to it)
         UpdateTraverser.timeToBuildDownRemaining -= @task.updateDuration / @threadPool.nrOfThreads
 
-        if @task.errorOccuredInDependencies then
+        if @task.updateError then
 
           @task.handleUpdateError()
           @task.dependantTasks.each do |dependantTask|
-            dependantTask.errorOccuredInDependencies = true if dependantTask.updateMark
+            dependantTask.updateError = true if dependantTask.updateMark
           end
 
         else
@@ -1660,7 +1667,7 @@ module Makr
 
             if not successfulUpdate then
               @task.dependantTasks.each do |dependantTask|
-                dependantTask.errorOccuredInDependencies = true if dependantTask.updateMark
+                dependantTask.updateError = true if dependantTask.updateMark
               end
               UpdateTraverser.abortBuild = true if @stopOnFirstError
             else
@@ -1723,7 +1730,7 @@ module Makr
       # prepare the task variables upon descend
       task.updateMark = true
       task.dependenciesUpdatedCount = 0
-      task.errorOccuredInDependencies = false
+      task.updateError = false
       # each task that we mark gets touched by Updater, so we increase timeToBuildDownRemaining by the
       # number of seconds estimated in previous builds (see Updater.run)
       # we scale by the nrOfThreads employed (ok, this is not a linear speedup, but close to it)
