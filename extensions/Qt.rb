@@ -124,12 +124,6 @@ module Makr
       return (not MocTask.containsQ_OBJECTMacro?(@fileName))
     end
 
-
-    # remove possibly remaining generated mocced file before deletion
-    def cleanupBeforeDeletion()
-      File.delete @mocFileName  rescue nil
-    end
-
   end
 
 
@@ -306,12 +300,6 @@ module Makr
     # this task wants to be deleted if the file no longer contains the Q_OBJECT macro (TODO is this correct?)
     def mustBeDeleted?()
       return (not File.exists?(@fileName))
-    end
-
-
-    # remove possibly remaining generated mocced file before deletion
-    def cleanupBeforeDeletion()
-      File.delete @uicFileName rescue nil
     end
 
   end
