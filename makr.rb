@@ -1320,10 +1320,14 @@ module Makr
         end
       end
       # finally give message:
-      if not UpdateTraverser.abortBuild
+      if not UpdateTraverser.abortBuild and not @buildError then
         Makr.log.info("\n")
         Makr.log.info("\n")
-        Makr.log.info("############ successfully build task ############")
+        Makr.log.info("############ ;-) successfully build task ############")
+      else
+        Makr.log.info("\n")
+        Makr.log.info("\n")
+        Makr.log.info("~~~~~~~~~~~~ :( ERROR on building task ~~~~~~~~~~~~~")
       end
     end
 
@@ -1622,7 +1626,8 @@ module Makr
 
       def collectChildState(task) # returns empty string if task has no childs
         retString = String.new
-        task.dependencies.each do |dep|
+        localTaskArray = task.dependencies.sort {|t1, t2| t1.name <=> t2.name}
+        localTaskArray.each do |dep|
           retString += dep.state
         end
         return retString
@@ -1665,7 +1670,7 @@ module Makr
             successfulUpdate = @task.update()
             @task.updateDuration = (Time.now - t1)
 
-            if not successfulUpdate then
+            unless successfulUpdate then
               @task.dependantTasks.each do |dependantTask|
                 dependantTask.updateError = true if dependantTask.updateMark
               end
@@ -1721,6 +1726,7 @@ module Makr
         @threadPool.execute {updater.run()}
       end
       @threadPool.join()
+      build.doPostUpdates()
     end
 
 
