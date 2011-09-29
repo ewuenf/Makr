@@ -15,6 +15,6 @@ Konfiguration mehr auslagern (Convenience-Klassen?)
 Beispiele aufsplitten oder alle Möglichkeiten in einem großem Beispiel-Makrfile (oder beides ;-) )
 Unterprojekte möglichst abgetrennt und testen!!
 
-fileHash und getTaskForTarget scheinen Funktionalität zu duplizieren
-stopOnFirstError in UpdateTraverser aufräumen
-UpdateTraverser.timeToBuildDownRemaining  mit mutex absichern
+-MMD -MG compiler options ?
+
+preupdate?

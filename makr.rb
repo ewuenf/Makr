@@ -176,7 +176,12 @@ module Makr
   # a helper function to clean a pathName fed into the function coming out with no slashes at the end
   def Makr.cleanPathName(pathName)
     Makr.log.warn("Trying to clean empty pathName!") if (not pathName or pathName.empty?)
+    # first remove slashes at the end
     pathName.gsub!(/\/+$/, '') # returns nil, if no substitution is performed
+    # then, if we have a relative path, let it begin with ./
+    if pathName.index("/") != 0 then # have a relative path
+      pathName = "./" + pathName if pathName.index("./") != 0
+    end
     return pathName
   end
 
@@ -558,7 +563,6 @@ module Makr
         @state = String.new  # empty string means update is definitely necessary
         if @missingFileIsError then
           Makr.log.fatal("file #{@fileName} is unexpectedly missing!\n\n")
-          Makr.abortBuild()
           return false # error case
         end
         Makr.log.debug("file #{@fileName} is missing, induces update.")
@@ -687,6 +691,9 @@ module Makr
       super(CompileTask.makeName(@fileName), config)
       @build = build
 
+      # the dep tasks, that are constructed below are not added yet to the dependencies Array as this is done
+      # in buildDependencies(), called before update
+      
       # first construct a dependency on the file itself, if it isnt generated
       # (we dont add dependencies yet, as they get added upon automatic dependency generation in
       # the function buildDependencies())
@@ -710,6 +717,7 @@ module Makr
         @compileTargetDep = @build.getTask(@objectFileName)
       end
       @targets = [@objectFileName] # set targets produced by this task
+      deleteTargets() # delete targets upon construction to guarantee a first update
 
       # construct a dependency task on the configuration
       @configTaskDepName = ConfigTask.makeName(@name)
@@ -720,9 +728,12 @@ module Makr
         @configTaskDep = @build.getTask(@configTaskDepName)
       end
 
-      # the following first deletes all deps and then constructs them including tasks constructed above
-      getDepsStringArrayFromCompiler()
       buildDependencies() # also adds dependencies generated above
+      # we dont call the compiler right now to identify dependencies, only after update,
+      # because we can then assume that all tasks exist, that might be needed to build the
+      # dependencies (including those tasks that generate targets, that may be needed, like
+      # header files). this task is guaranteed to be updated nevertheless, if nothing goes
+      # wrong, as the object file does not exist
 
       Makr.log.debug("made CompileTask with @name=\"" + @name + "\"") # debug feedback
     end
@@ -744,11 +755,8 @@ module Makr
       end
 
       # now we check, if we also want system header deps
-      unless @checkOnlyUserHeaders.is_a? NilClass then # the local variable overrides class variable if set
-        checkOnlyUserHeaders = @checkOnlyUserHeaders
-      else
-        checkOnlyUserHeaders = @@checkOnlyUserHeaders
-      end
+      # the local variable overrides class variable if set
+      checkOnlyUserHeaders = (@checkOnlyUserHeaders)? @checkOnlyUserHeaders : @@checkOnlyUserHeaders
       # system headers are excluded using compiler option "-MM", else "-M"
       depCommand = makeCompilerCallString() + ((checkOnlyUserHeaders)?" -MM ":" -M ") + @fileName
 
@@ -759,7 +767,6 @@ module Makr
       if $?.exitstatus != 0 then # $? is thread-local, so this should be safe in multi-threaded update
         Makr.log.fatal( "error #{$?.exitstatus} in CompileTask for file \"" + @fileName +
                         "\" making dependencies failed, check file for syntax errors!")
-        Makr.abortBuild()
         return false # error case
       end
       return true # success case
@@ -771,6 +778,15 @@ module Makr
     # dependencies but do no rebuild them as the tree should not be changed during multi-threaded update
     def buildDependencies()
       clearDependencies()
+
+      # first we add the constructed dependencies as we simply cleared *all* deps before
+      addDependency(@compileFileDep) if not @fileIsGenerated
+      addDependency(@compileTargetDep)
+      addDependency(@configTaskDep)
+      addDependency(@generatorTaskDep) if @fileIsGenerated
+
+      # compiler generated deps
+      return if not @dependencyLines # only go on if we havem
       dependencyFiles = Array.new
       @dependencyLines.each do |depLine|
         depLine.strip! # remove white space and newlines
@@ -788,7 +804,8 @@ module Makr
       dependencyFiles.each do |depFile|
         depFile.strip!
         next if depFile.empty?
-        next if ( (depFile == @fileName) or (("./" + depFile) == @fileName))
+        Makr.cleanPathName(depFile)
+        next if (depFile == @fileName) # go on if dependency on source file encountered
         if @build.hasTask?(depFile) then
           task = @build.getTask(depFile)
           if not @dependencies.include?(task)
@@ -804,11 +821,7 @@ module Makr
           addDependency(task)
         end
       end
-      # now we also add the constructed dependencies again as we cleared all deps in the beginning
-      addDependency(@compileFileDep) if not @fileIsGenerated
-      addDependency(@compileTargetDep)
-      addDependency(@configTaskDep)
-      addDependency(@generatorTaskDep) if @fileIsGenerated
+
     end
 
 
@@ -1297,28 +1310,28 @@ module Makr
     def build(task = nil)
       @buildError = false
       updateTraverser = UpdateTraverser.new(@nrOfThreads)
+      effectiveTask = nil
       if task then
-        updateTraverser.traverse(self, task, @stopOnFirstError)
-        @buildError = task.updateError
+        effectiveTask = task
       else
         # check default task or search for a single task without dependant tasks (but give warning)
         if @defaultTask.kind_of? Task then
-          updateTraverser.traverse(self, @defaultTask, @stopOnFirstError)
-          @buildError = @defaultTask.updateError
+          effectiveTask = @defaultTask
         else
           Makr.log.warn("no (default) task given for build, searching for root task")
-          taskFound = @taskHash.values.select {|v| v.dependantTasks.empty?}
-          if taskFound.size >= 1 then
-            if taskFound.size > 1 then
-              Makr.log.warn("more than one root task found, taking the first found, which is: " + taskFound.first.name)
+          tasksFound = @taskHash.values.select {|v| v.dependantTasks.empty?}
+          if tasksFound.size >= 1 then
+            if tasksFound.size > 1 then
+              Makr.log.warn("more than one root task found, taking the first found, which is: " + tasksFound.first.name)
             end
-            updateTraverser.traverse(self, taskFound.first, @stopOnFirstError)
-            @buildError = taskFound.first.updateError
+            effectiveTask = tasksFound.first
           else
             raise "failed with all fallbacks in Build.build"
           end
         end
       end
+      updateTraverser.traverse(self, effectiveTask)
+      @buildError = effectiveTask.updateError
       # finally give message:
       if not UpdateTraverser.abortBuild and not @buildError then
         Makr.log.info("\n")
@@ -1327,7 +1340,7 @@ module Makr
       else
         Makr.log.info("\n")
         Makr.log.info("\n")
-        Makr.log.info("~~~~~~~~~~~~ :( ERROR on building task ~~~~~~~~~~~~~")
+        Makr.log.info("~~~~~~~~~~~~ :(  ERROR on building task  ~~~~~~~~~~~~")
       end
     end
 
@@ -1396,6 +1409,7 @@ module Makr
     end
 
 
+    # this is not the same as fileHash, as it looks at the targets of all tasks
     def getTaskForTarget(fileName)
       @taskHash.each_value do |task|
         return task if (task.targets and task.targets.include?(fileName))
@@ -1613,6 +1627,10 @@ module Makr
     def UpdateTraverser.timeToBuildDownRemaining=(arg)
       @@timeToBuildDownRemaining = arg
     end
+    @@timeToBuildDownRemainingMutex = Mutex.new
+    def UpdateTraverser.timeToBuildDownRemainingMutex
+      @@timeToBuildDownRemainingMutex
+    end
 
 
     # nested class representing a single task update, executed in a thread pool
@@ -1648,8 +1666,11 @@ module Makr
 
       def daDoRunRunRun()
         # as we will have done a task (wether it was updated or not doesnt matter), we want to decrease the timeToBuildDownRemaining
-        # we scale by the nrOfThreads employed (ok, this is not a linear speedup, but close to it)
-        UpdateTraverser.timeToBuildDownRemaining -= @task.updateDuration / @threadPool.nrOfThreads
+        # we scale by the nrOfThreads employed (ok, this is not a linear speedup, but close to it). As we decrease in parallel, we
+        # need the mutex here.
+        UpdateTraverser.timeToBuildDownRemainingMutex.synchronize do
+          UpdateTraverser.timeToBuildDownRemaining -= @task.updateDuration / @threadPool.nrOfThreads
+        end
 
         if @task.updateError then
 
@@ -1712,9 +1733,8 @@ module Makr
     # of threads is limited by a thread pool.
     #
     # TODO: We expect the DAG to have no cycles here. Should we check?
-    def traverse(build, root, stopOnFirstError)
+    def traverse(build, root)
       build.resetUpdateMarks()
-      @stopOnFirstError = stopOnFirstError
       # reset the count that represents the nr of tasks that are affected by this update
       @@timeToBuildDownRemaining = 0.0
       collectedTasksWithNoDeps = Array.new
@@ -1722,7 +1742,7 @@ module Makr
       collectedTasksWithNoDeps.uniq!
       Makr.log.info("collectedTasksWithNoDeps.size: " + collectedTasksWithNoDeps.size.to_s)
       collectedTasksWithNoDeps.each do |noDepsTask|
-        updater = Updater.new(noDepsTask, @threadPool, stopOnFirstError)
+        updater = Updater.new(noDepsTask, @threadPool, build.stopOnFirstError)
         @threadPool.execute {updater.run()}
       end
       @threadPool.join()
