@@ -431,6 +431,11 @@ module Makr
     end
 
 
+    # called once before build starts on all tasks of the build
+    def preUpdate()
+    end
+
+
     # this is called if upon update of a dependency (or a dependency of a dependency...) an error occurred
     def handleUpdateError()
       deleteTargets()
@@ -445,7 +450,7 @@ module Makr
     end
 
     alias :deleteTargetsBeforeUpdate :deleteTargets # see UpdateTraverser::Updater::run()
-    
+
 
     # can be impletemented by subclasses indicating that this task is no longer valid due to for example a missing file
     def mustBeDeleted?()
@@ -693,7 +698,7 @@ module Makr
 
       # the dep tasks, that are constructed below are not added yet to the dependencies Array as this is done
       # in buildDependencies(), called before update
-      
+
       # first construct a dependency on the file itself, if it isnt generated
       # (we dont add dependencies yet, as they get added upon automatic dependency generation in
       # the function buildDependencies())
@@ -728,14 +733,20 @@ module Makr
         @configTaskDep = @build.getTask(@configTaskDepName)
       end
 
-      buildDependencies() # also adds dependencies generated above
-      # we dont call the compiler right now to identify dependencies, only after update,
-      # because we can then assume that all tasks exist, that might be needed to build the
-      # dependencies (including those tasks that generate targets, that may be needed, like
-      # header files). this task is guaranteed to be updated nevertheless, if nothing goes
-      # wrong, as the object file does not exist
+      # Dependencies are setup once upon first call in preUpdate and then after each build in postUpdate.
+      # This is used to get generated source files (including headers) from other tasks that have been
+      # setup before and add dependencies to these.
+      @calledPreUpdate = false # done only once, thus a boolean flag
 
       Makr.log.debug("made CompileTask with @name=\"" + @name + "\"") # debug feedback
+    end
+
+
+    def preUpdate()
+      return if @calledPreUpdate
+      @calledPreUpdate = true
+      getDepsStringArrayFromCompiler()
+      buildDependencies() # also adds dependencies generated in initialize
     end
 
 
@@ -1330,8 +1341,20 @@ module Makr
           end
         end
       end
+
+      # call preUpdate on all tasks before starting UpdateTraverser
+      # we need to take care, that the taskHash might get modified during iteration, so Hash.values
+      # returns a *new* array with all tasks at call time, on which we can safely iterate
+      Makr.log.info( " \n\n ############################# doing preUpdate() \n\n\n" )
+      @taskHash.values.each {|task| task.preUpdate() }
+
+      Makr.log.info( " \n\n ############################# doing update() \n\n\n" )
       updateTraverser.traverse(self, effectiveTask)
       @buildError = effectiveTask.updateError
+
+      Makr.log.info( " \n\n ############################# doing postUpdate() \n\n\n" )
+      doPostUpdates() if not @buildError
+
       # finally give message:
       if not UpdateTraverser.abortBuild and not @buildError then
         Makr.log.info("\n")
@@ -1746,7 +1769,6 @@ module Makr
         @threadPool.execute {updater.run()}
       end
       @threadPool.join()
-      build.doPostUpdates()
     end
 
 
@@ -2042,7 +2064,7 @@ unless File.symlink?(__FILE__) then
 else
   makrLinkPath = File.readlink(__FILE__) # makrLinkPath can be absolute or relative!
   if makrLinkPath.index('/') == 0 then
-    $makrDir = makrLinkPath
+    $makrDir = File.dirname(makrLinkPath)
   else
     $makrDir = File.dirname(__FILE__) + "/" + File.dirname(makrLinkPath)
   end
