@@ -177,10 +177,13 @@ module Makr
   def Makr.cleanPathName(pathName)
     Makr.log.warn("Trying to clean empty pathName!") if (not pathName or pathName.empty?)
     # first remove slashes at the end
-    pathName.gsub!(/\/+$/, '') # returns nil, if no substitution is performed
+    pathName = pathName.gsub(/\/+$/, '') # returns nil, if no substitution is performed
     # then, if we have a relative path, let it begin with ./
     if pathName.index("/") != 0 then # have a relative path
-      pathName = "./" + pathName if pathName.index("./") != 0
+      hasRelativePathBegin = pathName.index("./") # is nil if not found, index otherwise!
+      if (not hasRelativePathBegin) or (hasRelativePathBegin > 0) then
+        pathName = "./" + pathName 
+      end
     end
     return pathName
   end
@@ -815,7 +818,7 @@ module Makr
       dependencyFiles.each do |depFile|
         depFile.strip!
         next if depFile.empty?
-        Makr.cleanPathName(depFile)
+        depFile = Makr.cleanPathName(depFile)
         next if (depFile == @fileName) # go on if dependency on source file encountered
         if @build.hasTask?(depFile) then
           task = @build.getTask(depFile)
@@ -996,7 +999,7 @@ module Makr
   # constructs a dynamic lib target with the given taskCollection as dependencies, takes an optional libConfig
   # for configuration options. Sets default task in build!
   def Makr.makeDynamicLib(libFileName, build, taskCollection, libConfig = nil)
-    Makr.cleanPathName(libFileName)
+    libFileName = Makr.cleanPathName(libFileName)
     libTaskName = DynamicLibTask.makeName(libFileName)
     if not build.hasTask?(libTaskName) then
       build.addTask(libTaskName, DynamicLibTask.new(libFileName, build, libConfig))
@@ -1119,7 +1122,7 @@ module Makr
   # constructs a static lib target with the given taskCollection as dependencies, takes an optional libConfig
   # for configuration options. Sets default task in build!
   def Makr.makeStaticLib(libFileName, build, taskCollection, libConfig = nil)
-    Makr.cleanPathName(libFileName)
+    libFileName = Makr.cleanPathName(libFileName)
     libTaskName = StaticLibTask.makeName(libFileName)
     if not build.hasTask?(libTaskName) then
       build.addTask(libTaskName, StaticLibTask.new(libFileName, build, libConfig))
@@ -1238,7 +1241,7 @@ module Makr
   # constructs a ProgramTask with the given taskCollection as dependencies, takes an optional programConfig
   # for configuration options. Sets default task in build!
   def Makr.makeProgram(progName, build, taskCollection, programConfig = nil)
-    Makr.cleanPathName(progName)
+    progName = Makr.cleanPathName(progName)
     programTaskName = ProgramTask.makeName(progName)
     if not build.hasTask?(programTaskName) then
       build.addTask(programTaskName, ProgramTask.new(progName, build, programConfig))
@@ -1665,6 +1668,7 @@ module Makr
         @stopOnFirstError = stopOnFirstError
       end
 
+
       def collectChildState(task) # returns empty string if task has no childs
         retString = String.new
         localTaskArray = task.dependencies.sort {|t1, t2| t1.name <=> t2.name}
@@ -1673,6 +1677,7 @@ module Makr
         end
         return retString
       end
+
 
       # we need to go up the tree with the traversal even in case dependency did not update or had an error upon update
       # just to increase the dependenciesUpdatedCount in each marked node so that in case
@@ -1686,6 +1691,7 @@ module Makr
           daDoRunRunRun() # see immediately below
         end
       end
+
 
       def daDoRunRunRun()
         # as we will have done a task (wether it was updated or not doesnt matter), we want to decrease the timeToBuildDownRemaining
@@ -1707,6 +1713,7 @@ module Makr
           childState = collectChildState(@task)
           # do we need to update?
           if (@task.dependencies.empty? or (childState != @task.state)) and not UpdateTraverser.abortBuild then
+            puts "##### @task.name: " + @task.name + " #### childState: " + childState + " ###### @task.state: " + @task.state
             # we update expected duration when task is updated, so that only the last measured time is used the next time
             t1 = Time.now
             # we always delete targets before update, Task classes that do not want this, should overwrite the function
@@ -1847,7 +1854,7 @@ module Makr
 
       return if UpdateTraverser.abortBuild # check if build was aborted before proceeding
 
-      Makr.cleanPathName(dirName)
+      dirName = Makr.cleanPathName(dirName)
       # first recurse into sub directories
       if recurse then
         Dir[dirName + "/*/"].each do |subDir|
@@ -1890,7 +1897,7 @@ module Makr
 
 
     def generate(fileName)
-      Makr.cleanPathName(fileName)
+      fileName = Makr.cleanPathName(fileName)
       compileTaskName = CompileTask.makeName(fileName)
       if not @build.hasTask?(compileTaskName) then
         @build.addTask(compileTaskName, CompileTask.new(fileName, @build, @config))
@@ -1996,7 +2003,7 @@ module Makr
   # loads a Makrfile.rb from the given dir and executes it using Kernel.load and push/pops the current ScriptArguments, so that they are save
   def Makr.makeDir(dir)
     return if UpdateTraverser.abortBuild # check if build was aborted before proceeding
-    Makr.cleanPathName(dir)
+    dir = Makr.cleanPathName(dir)
     oldDir = Dir.pwd
     Dir.chdir(dir)
     makrFilePath = "./Makrfile.rb"

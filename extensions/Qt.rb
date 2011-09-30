@@ -149,7 +149,7 @@ module Makr
       return Array.new if not MocTask.containsQ_OBJECTMacro?(fileName)
 
       # Q_OBJECT contained, now go on
-      Makr.cleanPathName(fileName)
+      fileName = Makr.cleanPathName(fileName)
       mocTaskName = MocTask.makeName(fileName)
       if not @build.hasTask?(mocTaskName) then
         mocTask = MocTask.new(fileName, @build, @mocTaskConfig)
@@ -333,7 +333,7 @@ module Makr
     def generate(fileName)
       return Array.new if not fileName.rindex(".ui")  # TODO: maybe we want to check for the xml code inside
 
-      Makr.cleanPathName(fileName)
+      fileName = Makr.cleanPathName(fileName)
       uicTaskName = UicTask.makeName(fileName)
       if not @build.hasTask?(uicTaskName) then
         uicTask = UicTask.new(fileName, @build, @uicTaskConfig)
