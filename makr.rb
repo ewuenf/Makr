@@ -341,14 +341,20 @@ module Makr
     attr_reader :targets
     # reference to Config object
     attr_accessor :config
-    # these are used by the multi-threaded UpdateTraverser (most of these are related to update() and postUpdate(),
-    # updateError is related to handleUpdateError() )
-    attr_accessor :mutex, :updateMark, :dependenciesUpdatedCount, :updateDuration, :updateError
-    # state determines for inner nodes of the task graph, if an update is necessary:
-    # for leaf nodes the state must be set by the nodes upon call to the update() function, while
-    # for inner nodes, the state is set by UpdateTraverser::Updater to match an accumulation
-    # of the child states, so that upon a new build run, a necessary update can be detected
-    attr_accessor :state
+    # these are used by the multi-threaded UpdateTraverser
+    attr_accessor :mutex, :updateMark, :dependenciesUpdatedCount, :updateDuration
+    # State has two purposes:
+    #   -> it encodes an abstract representation of a node state in a string
+    #      -> for leaf nodes this for example can be the md5-sum of a file (as in FileTask)
+    #      -> for inner nodes, this typically is the concatenated states of childs upon successful update
+    #         (see function concatChildStates())
+    #   -> it encodes successful update or not (in the latter case, state is nil). This means that
+    #      Task instances should begin update() by setting state to nil and then setting a meaningful
+    #      value upon successful update at the end of update() or in postUpdate()
+    # Based on this semantics the state variable determines for inner nodes of the task graph,
+    # if an update is necessary: upon a new build run, a necessary update can be detected by checking,
+    # if the state matches the concatenated child states (see function needsUpdate())
+    attr_reader :state
 
 
     # name must be unique within a build (see class Build)!
@@ -363,10 +369,7 @@ module Makr
       @mutex = Mutex.new
       @updateMark = false
       @dependenciesUpdatedCount = 0
-      @updateDuration = 1.0
-      @updateError = false
-
-      @state = @accumulatedChildState = String.new
+      @updateDuration = 1.0 # initial guess is one second (more of an integral countdown)
     end
 
 
@@ -416,20 +419,47 @@ module Makr
     end
 
 
-    # Every subclass should provide an "update()" function, that returns wether the update was successful or not
-    # The task graph itself should be unchanged during update. Use function postUpdate() for this purpose.
+    # called by UpdateTraverser::Updater. Determines, if task needs a call to update(). This is not called
+    # for leaf nodes of the dependency graph (tasks with no dependencies), as they are always updated.
+    # Derived classes are free to override, a return value of true means that an update is necessary.
+    def needsUpdate()
+      return true if not @state
+      childState = concatChildState() # a little helper var for the next two test
+      return false if not childState  # if one of our childs has an update error, it does not make sense to update this Task
+      return true if (@state != childState) # this is the central change detection
+      return false # otherwise nothing changed and we dont need to update
+    end
+
+
+    # returns nil if task has no dependencies or if one of the dependencies has nil state, otherwise it
+    # returns a concatenation of all the state strings of the dependencies.
+    def concatChildState()
+      return nil if @dependencies.empty?
+      retString = String.new
+      # we sort by name to compensate changes in array order (name should be unique)
+      localTaskArray = @dependencies.sort {|t1, t2| t1.name <=> t2.name}
+      localTaskArray.each do |dep|
+        return nil if not dep
+        retString += dep.state
+      end
+      return retString
+    end
+
+
+    # Every subclass should provide an "update()" function, that performs an action that updates the Task
+    # (like compilation etc.). The task graph itself should be unchanged during update as we do a multithreaded
+    # update. Use function postUpdate() for this purpose.
     def update()
-      return true # default is always successful update
     end
 
 
     # The method postUpdate() is optionally called after all tasks have been "update()"d. Tasks need to register for the
     # postUpdate()-call during the update()-call using "Build::registerPostUpdate(self)". While update() is called in
     # parallel on the task graph and should not modify the graph, this function is called on all registered tasks in a
-    # single thread, so that no issues with multi-threading can occur. As this obviously is a bottleneck, the function
+    # single thread in the sequence they have registered (which is supposed to resemble the update()-dependency-order),
+    # so that no issues with multi-threading can occur. As this obviously is a bottleneck, the function
     # should only be used if it is absolutely necessary to modify the task structure upon updating procedure.
-    # This behaviour might change in future revisions of this tool, as the author or someone else might get better
-    # concepts out of his brain.
+    # It happens for example in the automatic dependency detection of the CompileTask class.
     def postUpdate()
     end
 
@@ -439,12 +469,7 @@ module Makr
     end
 
 
-    # this is called if upon update of a dependency (or a dependency of a dependency...) an error occurred
-    def handleUpdateError()
-      deleteTargets()
-    end
-
-
+    # is always called just before the call to update(), if necessary, see UpdateTraverser::Updater::run()
     def deleteTargets()
       return if not @targets
       @targets.each do |target|
@@ -452,12 +477,10 @@ module Makr
       end
     end
 
-    alias :deleteTargetsBeforeUpdate :deleteTargets # see UpdateTraverser::Updater::run()
-
 
     # can be impletemented by subclasses indicating that this task is no longer valid due to for example a missing file
     def mustBeDeleted?()
-      false
+      return false
     end
 
 
@@ -512,7 +535,6 @@ module Makr
       raise "[makr] ConfigTask #{name} does not have a dependant task, but needs one!" if (not (dependantTasks.size == 1))
       # just update state with config string from the only dependantTask
       @state = dependantTasks.first.getConfigString()
-      return true # task is always successful
     end
 
   end
@@ -568,13 +590,15 @@ module Makr
     def update()
       # first check missing file case
       if (not File.file?(@fileName)) then
-        @state = String.new  # empty string means update is definitely necessary
-        if @missingFileIsError then
-          Makr.log.fatal("file #{@fileName} is unexpectedly missing!\n\n")
-          return false # error case
+        if @missingFileIsError then # error case
+          Makr.log.error("FileTask #{@name}: file is unexpectedly missing!")
+          @state = nil
+          return
         end
-        Makr.log.debug("file #{@fileName} is missing, induces update.")
-        return true # success case
+        # "success" case
+        Makr.log.debug("FileTask #{@name}: file is missing.")
+        @state = String.new # missing file has no specific state
+        return
       end
 
       # now we either use the hash of the file or we use file attributes to determine changes
@@ -603,19 +627,14 @@ module Makr
           hasChanged = true
         end
       end
-
-      if hasChanged then
-        Makr.log.debug("file #{@fileName} has changed, induces update.")
-      end
-
-      return true # always successful, when here
+      Makr.log.debug("FileTask #{@name}: file #{@fileName} has changed.") if hasChanged
     end
 
   end
 
 
 
-
+  go on here
 
 
 
@@ -860,6 +879,9 @@ module Makr
 
     def postUpdate()
       buildDependencies()  # assuming we have called the compiler already in update giving us the deps strings
+      this call can add a lot of dependencies that induce a recompile the next time, although nothing changed, howto solve this?:
+        * calling update on all build dependencies ? (only this task was updated successfully ? ( needs error flag))
+        * ignore the whole thing because after one additional update, the whole shit stabilizes with no rebuilds
     end
 
   end
@@ -1669,19 +1691,9 @@ module Makr
       end
 
 
-      def collectChildState(task) # returns empty string if task has no childs
-        retString = String.new
-        localTaskArray = task.dependencies.sort {|t1, t2| t1.name <=> t2.name}
-        localTaskArray.each do |dep|
-          retString += dep.state
-        end
-        return retString
-      end
-
-
       # we need to go up the tree with the traversal even in case dependency did not update or had an error upon update
       # just to increase the dependenciesUpdatedCount in each marked node so that in case
-      # of the update of a single (sub-)child, the node will surely be updated or an update error is handled!
+      # of the update of a single (sub-)dependency, the node will surely be updated or an update error is handled!
       # An intermediate node up to the root might not be updated, as it need not, but the algorithm logic
       # still needs to handle dependant tasks for the above reason.
       def run()
@@ -1710,14 +1722,13 @@ module Makr
 
         else
 
-          childState = collectChildState(@task)
           # do we need to update?
-          if (@task.dependencies.empty? or (childState != @task.state)) and not UpdateTraverser.abortBuild then
+          if (@task.dependencies.empty? or @task.needsUpdate()) and not UpdateTraverser.abortBuild then
             puts "##### @task.name: " + @task.name + " #### childState: " + childState + " ###### @task.state: " + @task.state
             # we update expected duration when task is updated, so that only the last measured time is used the next time
             t1 = Time.now
             # we always delete targets before update, Task classes that do not want this, should overwrite the function
-            @task.deleteTargetsBeforeUpdate()
+            @task.deleteTargets()
             successfulUpdate = @task.update()
             @task.updateDuration = (Time.now - t1)
 

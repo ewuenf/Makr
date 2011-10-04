@@ -33,15 +33,12 @@ build.saveAfterBlock do
   compilerConfig["compiler"] = "g++"
   compilerConfig["compiler.includePaths"] = " -I" + $localDir + "/src" + " -I/usr/lib/qt3/include"
   compilerConfig["linker"] = "g++"
-  compilerConfig["linker.libs"] = " -lX11 -lqt-mt"
-  compilerConfig["linker.libPaths"] = "-L/usr/lib/qt3/lib64"
+  compilerConfig["linker.libs"] = " -lX11"
   # use pkg-config to simplify config tasks
   Makr::PkgConfig.addCFlags(compilerConfig, "libpng")
   Makr::PkgConfig.addLibs(compilerConfig, "libpng")
-  # for the moc task, which otherwise would only look for "moc" in the system path
-  mocConfig = build.makeNewConfig("MocTask")
-  mocConfig.clear()
-  mocConfig["moc"] = "/usr/lib/qt3/bin/moc"
+  Makr::PkgConfig.addCFlags(compilerConfig, "QtCore")
+  Makr::PkgConfig.addLibs(compilerConfig, "QtCore")
 
 
   # then we collect all relevant files and apply generators to them
@@ -52,12 +49,14 @@ build.saveAfterBlock do
   allHeaderFiles = Makr::FileCollector.collect($localDir + "/src/", "*.{h}", true)
   tasks.concat(
     Makr.applyGenerators \
-      (allHeaderFiles, [Makr::MocTaskGenerator.new(build, build.getConfig("CompileTask"), build.getConfig("MocTask"))])
+      (allHeaderFiles, [Makr::MocTaskGenerator.new(build, build.getConfig("CompileTask"))])
               )
 
   # so this Makrfile.rb is going to build a program
   myProgramTask = Makr.makeProgram($buildDir + "/myProgram", build, tasks, build.getConfig("CompileTask"))
 
+  #myProgramTask.printDependencies()
+  #exit 0
 
   # set special options for a single task
   compileTaskName = Makr::CompileTask.makeName($localDir + "/src/A.cpp")
