@@ -118,8 +118,8 @@ module Makr
       Makr.log.error("Error in MocTask #{@name}") if not successful
       @mocTargetDep.update() # update file information on the compiled target in any case
 
-      # indicate successful update by setting state string to empty string (state string is set correctly in postUpdate)
-      @state = String.new if successful 
+      # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
+      @state = concatStateOfDependencies() if successful 
     end
 
 
@@ -291,13 +291,17 @@ module Makr
 
 
     def update()
+      @state = nil # first set state to unsuccessful build
+
       # construct compiler command and execute it
       uicCommand = makeUicCallString() + " -o " + @uicFileName + " " + @fileName
       Makr.log.info("Executing uic in UicTask: \"" + @name + "\"\n\t" + uicCommand)
       successful = system(uicCommand)
       Makr.log.error("Error in UicTask #{@name}") if not successful
       @uicTargetDep.update() # update file information on the compiled target in any case
-      return successful
+
+      # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
+      @state = concatStateOfDependencies() if successful 
     end
 
 

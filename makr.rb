@@ -631,7 +631,7 @@ module Makr
         curHash = MD5.new(open(@fileName, 'rb').read).hexdigest
         if(@fileHash != curHash)
           @fileHash = curHash
-          @state = @fileHash  # compose state from file state
+          @state = " FileHash: " + @fileHash  # compose state from file state
           hasChanged = true
         end
 
@@ -640,7 +640,7 @@ module Makr
         if (@time != stat.mtime) or (@size != stat.size) then
           @time = stat.mtime
           @size = stat.size
-          @state = @time.to_s + @size.to_s # compose state from file state
+          @state = " File attribs: " + @time.to_s + " " + @size.to_s # compose state from file state
           hasChanged = true
         end
       end
@@ -878,8 +878,8 @@ module Makr
       Makr.log.error("Error in CompileTask #{@name}") if not successful
       @compileTargetDep.update() # update file information on the compiled target in any case
 
-      # indicate successful update by setting state string to empty string (state string is set correctly in postUpdate)
-      @state = String.new if successful 
+      # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
+      @state = concatStateOfDependencies() if successful 
     end
 
 
@@ -1016,8 +1016,8 @@ module Makr
       Makr.log.error("Error in DynamicLibTask #{@name}") if not successful
       @libTargetDep.update() # update file information on the compiled target in any case
 
-      # indicate successful update by setting state string to empty string (state string is set correctly in postUpdate)
-      @state = String.new if successful 
+      # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
+      @state = concatStateOfDependencies() if successful 
     end
 
   end
@@ -1142,8 +1142,8 @@ module Makr
       Makr.log.error("Error in StaticLibTask #{@name}") if not successful
       @libTargetDep.update() # update file information on the compiled target in any case
 
-      # indicate successful update by setting state string to empty string (state string is set correctly in postUpdate)
-      @state = String.new if successful 
+      # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
+      @state = concatStateOfDependencies() if successful 
     end
 
   end
@@ -1266,8 +1266,8 @@ module Makr
       Makr.log.error("Error in ProgramTask #{@name}") if not successful
       @targetDep.update() # update file information on the compiled target in any case
 
-      # indicate successful update by setting state string to empty string (state string is set correctly in postUpdate)
-      @state = String.new if successful 
+      # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
+      @state = concatStateOfDependencies() if successful 
     end
 
   end
@@ -1728,10 +1728,10 @@ module Makr
         # need the mutex here.
         UpdateTraverser.timeToBuildDownRemainingMutex.synchronize do
           UpdateTraverser.timeToBuildDownRemaining -= @task.updateDuration / @threadPool.nrOfThreads
+          UpdateTraverser.timeToBuildDownRemaining = 0.0 if (UpdateTraverser.timeToBuildDownRemaining < 3.0)
         end
 
         if @task.dependencyHadUpdateError() then
-          puts "\n\n\n\n\ndependency error in #{@task.name}\n\n\n\n"
           @task.deleteTargets()
           @task.setErrorState() # set update error on this task too, as a dependency had an error (error propagation)
         
@@ -2072,7 +2072,7 @@ Makr.log << "\n\nmakr version 1.1\n\n"  # just give short version notice on ever
 
 # then set the signal handler to allow cooperative aborting of the build process on SIGUSR1 or SIGTERM
 abort_handler = Proc.new do
-  puts Makr.log.fatal("Aborting build on signal USR1 or TERM")
+  Makr.log.fatal("Aborting build on signal USR1 or TERM")
   Makr.abortBuild()
 end
 Signal.trap("USR1", abort_handler)
@@ -2093,6 +2093,7 @@ else
     $makrDir = File.dirname(__FILE__) + "/" + File.dirname(makrLinkPath)
   end
 end
+$makrDir = File.expand_path($makrDir) # kill relative paths
 $makrExtensionsDir = $makrDir + "/extensions"
 
 

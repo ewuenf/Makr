@@ -48,8 +48,7 @@ build.saveAfterBlock do
   tasks = Makr.applyGenerators(allCPPFiles, [Makr::CompileTaskGenerator.new(build, build.getConfig("CompileTask"))])
   allHeaderFiles = Makr::FileCollector.collect($localDir + "/src/", "*.{h}", true)
   tasks.concat(
-    Makr.applyGenerators \
-      (allHeaderFiles, [Makr::MocTaskGenerator.new(build, build.getConfig("CompileTask"))])
+    Makr.applyGenerators(allHeaderFiles, [Makr::MocTaskGenerator.new(build, build.getConfig("CompileTask"))])
               )
 
   # so this Makrfile.rb is going to build a program
@@ -68,6 +67,6 @@ build.saveAfterBlock do
 
   # finally, just build the whole thing (only building things, that have changed since last call)
   # we could use "build.nrOfThreads = <number>" here to specify the number of threads to be used upon building
-  build.nrOfThreads = 1 # a single thread can be helpful for debugging
+  #build.nrOfThreads = 1 # a single thread can be helpful for debugging
   build.build()
 end
