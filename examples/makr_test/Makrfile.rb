@@ -68,5 +68,6 @@ build.saveAfterBlock do
 
   # finally, just build the whole thing (only building things, that have changed since last call)
   # we could use "build.nrOfThreads = <number>" here to specify the number of threads to be used upon building
+  build.nrOfThreads = 1 # a single thread can be helpful for debugging
   build.build()
 end

@@ -109,13 +109,17 @@ module Makr
 
 
     def update()
+      @state = nil # first set state to unsuccessful build
+
       # construct compiler command and execute it
       mocCommand = makeMocCallString() + " -o " + @mocFileName + " " + @fileName
       Makr.log.info("Executing moc in MocTask: \"" + @name + "\"\n\t" + mocCommand)
       successful = system(mocCommand)
       Makr.log.error("Error in MocTask #{@name}") if not successful
       @mocTargetDep.update() # update file information on the compiled target in any case
-      return successful
+
+      # indicate successful update by setting state string to empty string (state string is set correctly in postUpdate)
+      @state = String.new if successful 
     end
 
 

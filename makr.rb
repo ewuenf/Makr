@@ -347,13 +347,13 @@ module Makr
     #   -> it encodes an abstract representation of a node state in a string
     #      -> for leaf nodes this for example can be the md5-sum of a file (as in FileTask)
     #      -> for inner nodes, this typically is the concatenated states of childs upon successful update
-    #         (see function concatChildStates())
+    #         (see function concatStateOfDependenciess())
     #   -> it encodes successful update or not (in the latter case, state is nil). This means that
     #      Task instances should begin update() by setting state to nil and then setting a meaningful
     #      value upon successful update at the end of update() or in postUpdate()
     # Based on this semantics the state variable determines for inner nodes of the task graph,
     # if an update is necessary: upon a new build run, a necessary update can be detected by checking,
-    # if the state matches the concatenated child states (see function needsUpdate())
+    # if the state matches the concatenated child states (see functions needsUpdate(),postUpdate())
     attr_reader :state
 
 
@@ -424,7 +424,8 @@ module Makr
     # Derived classes are free to override, a return value of true means that an update is necessary.
     def needsUpdate()
       return true if not @state
-      childState = concatChildState() # a little helper var for the next two test
+      return true if dependencies.empty?
+      childState = concatStateOfDependencies() # a little helper var for the next two test
       return false if not childState  # if one of our childs has an update error, it does not make sense to update this Task
       return true if (@state != childState) # this is the central change detection
       return false # otherwise nothing changed and we dont need to update
@@ -433,19 +434,34 @@ module Makr
 
     # returns nil if task has no dependencies or if one of the dependencies has nil state, otherwise it
     # returns a concatenation of all the state strings of the dependencies.
-    def concatChildState()
+    def concatStateOfDependencies()
       return nil if @dependencies.empty?
       retString = String.new
       # we sort by name to compensate changes in array order (name should be unique)
       localTaskArray = @dependencies.sort {|t1, t2| t1.name <=> t2.name}
       localTaskArray.each do |dep|
-        return nil if not dep
+        return nil if not dep.state
         retString += dep.state
       end
       return retString
     end
 
+    
+    # used in UpdateTraverser::Updater
+    def dependencyHadUpdateError()
+      return false if @dependencies.empty? # no error, if we have no deps!
+      @dependencies.each do |dep|
+        return true if not dep.state
+      end
+      return false # no dependency had nil state, so everything is fine
+    end
+    
+    
+    def setErrorState()
+      @state = nil
+    end
 
+    
     # Every subclass should provide an "update()" function, that performs an action that updates the Task
     # (like compilation etc.). The task graph itself should be unchanged during update as we do a multithreaded
     # update. Use function postUpdate() for this purpose.
@@ -453,14 +469,13 @@ module Makr
     end
 
 
-    # The method postUpdate() is optionally called after all tasks have been "update()"d. Tasks need to register for the
-    # postUpdate()-call during the update()-call using "Build::registerPostUpdate(self)". While update() is called in
-    # parallel on the task graph and should not modify the graph, this function is called on all registered tasks in a
-    # single thread in the sequence they have registered (which is supposed to resemble the update()-dependency-order),
-    # so that no issues with multi-threading can occur. As this obviously is a bottleneck, the function
-    # should only be used if it is absolutely necessary to modify the task structure upon updating procedure.
-    # It happens for example in the automatic dependency detection of the CompileTask class.
+    # The method postUpdate() is called after all tasks have been "update()"d. While update() is called in
+    # parallel on the task graph and should not modify the graph, this function is called on all tasks in a
+    # single thread in the sequence they have been updated (which is supposed to resemble the update()-dependency-order),
+    # so that no issues with multi-threading can occur. Default behaviour is to concatenate the state of the
+    # dependencies if the update has been successful (@state is not nil) and dependencies exist
     def postUpdate()
+      @state = concatStateOfDependencies() if @state and (not @dependencies.empty?)
     end
 
 
@@ -533,8 +548,10 @@ module Makr
     def update()
       # produce a nice message in error case (we want exactly one dependant task)
       raise "[makr] ConfigTask #{name} does not have a dependant task, but needs one!" if (not (dependantTasks.size == 1))
+      
       # just update state with config string from the only dependantTask
-      @state = dependantTasks.first.getConfigString()
+      # getConfigString() is supposed to NOT deliver a nil object, but at least an empty String
+      @state = dependantTasks.first.getConfigString() 
     end
 
   end
@@ -629,12 +646,10 @@ module Makr
       end
       Makr.log.debug("FileTask #{@name}: file #{@fileName} has changed.") if hasChanged
     end
-
+  
   end
 
 
-
-  go on here
 
 
 
@@ -754,21 +769,10 @@ module Makr
       else
         @configTaskDep = @build.getTask(@configTaskDepName)
       end
-
-      # Dependencies are setup once upon first call in preUpdate and then after each build in postUpdate.
-      # This is used to get generated source files (including headers) from other tasks that have been
-      # setup before and add dependencies to these.
-      @calledPreUpdate = false # done only once, thus a boolean flag
+      
+      buildDependencies()
 
       Makr.log.debug("made CompileTask with @name=\"" + @name + "\"") # debug feedback
-    end
-
-
-    def preUpdate()
-      return if @calledPreUpdate
-      @calledPreUpdate = true
-      getDepsStringArrayFromCompiler()
-      buildDependencies() # also adds dependencies generated in initialize
     end
 
 
@@ -779,7 +783,7 @@ module Makr
     # function return true, if successful, false otherwise
     def getDepsStringArrayFromCompiler()
       # always clear input lines upon call
-      @dependencyLines = Array.new
+      @dependencyLines = nil
 
       # then check, if we need to to
       if (@fileIsGenerated and (not File.file?(@fileName))) then
@@ -844,28 +848,28 @@ module Makr
           if not @dependencies.include?(task)
             addDependency(task)
           end
-        elsif (generatorTask = @build.getTaskForTarget(depFile)) then
-          if not @dependencies.include?(generatorTask)
-            addDependency(generatorTask)
+        elsif (task = @build.getTaskForTarget(depFile)) then
+          if not @dependencies.include?(task)
+            addDependency(task)
           end
         else
           task = FileTask.new(depFile)
           @build.addTask(depFile, task)
           addDependency(task)
         end
+        task.update()
       end
 
     end
 
 
     def update()
+      @state = nil # first set state to unsuccessful build
+
       # here we execute the compiler to deliver an update on the dependent includes before compilation. We could do this
       # in postUpdate, too, but we assume this to be faster, as the files should be in OS cache afterwards and
       # thus the compilation (which is the next step) should be faster
-      return false if not getDepsStringArrayFromCompiler()
-
-      # we do not modify task structure on update and defer this to the postUpdate call like good little children
-      @build.registerPostUpdate(self)
+      return if not getDepsStringArrayFromCompiler()
 
       # construct compiler command and execute it
       compileCommand = makeCompilerCallString() + " -c " + @fileName + " -o " + @objectFileName
@@ -873,15 +877,15 @@ module Makr
       successful = system(compileCommand)
       Makr.log.error("Error in CompileTask #{@name}") if not successful
       @compileTargetDep.update() # update file information on the compiled target in any case
-      return successful
+
+      # indicate successful update by setting state string to empty string (state string is set correctly in postUpdate)
+      @state = String.new if successful 
     end
 
 
     def postUpdate()
       buildDependencies()  # assuming we have called the compiler already in update giving us the deps strings
-      this call can add a lot of dependencies that induce a recompile the next time, although nothing changed, howto solve this?:
-        * calling update on all build dependencies ? (only this task was updated successfully ? ( needs error flag))
-        * ignore the whole thing because after one additional update, the whole shit stabilizes with no rebuilds
+      super
     end
 
   end
@@ -997,6 +1001,8 @@ module Makr
 
 
     def update()
+      @state = nil # first set state to unsuccessful build
+      
       # we always check for properly setup dependencies
       checkDependencyTasksForPIC()
       # build compiler command and execute it
@@ -1009,7 +1015,9 @@ module Makr
       successful = system(linkCommand)
       Makr.log.error("Error in DynamicLibTask #{@name}") if not successful
       @libTargetDep.update() # update file information on the compiled target in any case
-      return successful
+
+      # indicate successful update by setting state string to empty string (state string is set correctly in postUpdate)
+      @state = String.new if successful 
     end
 
   end
@@ -1121,6 +1129,8 @@ module Makr
 
 
     def update()
+      @state = nil # first set state to unsuccessful build
+      
       # build compiler command and execute it
       linkCommand = makeLinkerCallString() + @libFileName
       @dependencies.each do |dep|
@@ -1131,12 +1141,12 @@ module Makr
       successful = system(linkCommand)
       Makr.log.error("Error in StaticLibTask #{@name}") if not successful
       @libTargetDep.update() # update file information on the compiled target in any case
-      return successful
+
+      # indicate successful update by setting state string to empty string (state string is set correctly in postUpdate)
+      @state = String.new if successful 
     end
 
   end
-
-
 
 
 
@@ -1243,6 +1253,8 @@ module Makr
 
 
     def update()
+      @state = nil # first set state to unsuccessful build
+
       # build compiler command and execute it
       linkCommand = makeLinkerCallString() + " -o " + @programName
       @dependencies.each do |dep|
@@ -1253,7 +1265,9 @@ module Makr
       successful = system(linkCommand)
       Makr.log.error("Error in ProgramTask #{@name}") if not successful
       @targetDep.update() # update file information on the compiled target in any case
-      return successful
+
+      # indicate successful update by setting state string to empty string (state string is set correctly in postUpdate)
+      @state = String.new if successful 
     end
 
   end
@@ -1327,6 +1341,8 @@ module Makr
 
       @defaultTask = nil
       @nrOfThreads = nil
+      
+      @accessMutex = Mutex.new # for synchronized accesses
     end
 
 
@@ -1375,7 +1391,7 @@ module Makr
 
       Makr.log.info( " \n\n ############################# doing update() \n\n\n" )
       updateTraverser.traverse(self, effectiveTask)
-      @buildError = effectiveTask.updateError
+      @buildError = (effectiveTask.state == nil)
 
       Makr.log.info( " \n\n ############################# doing postUpdate() \n\n\n" )
       doPostUpdates() if not @buildError
@@ -1414,7 +1430,7 @@ module Makr
 
 
     def registerPostUpdate(task)
-      @postUpdates.push(task)
+      @accessMutex.synchronize { @postUpdates.push(task) }
     end
 
 
@@ -1684,8 +1700,9 @@ module Makr
     # nested class representing a single task update, executed in a thread pool
     class Updater
 
-      def initialize(task, threadPool, stopOnFirstError)
+      def initialize(task, build, threadPool, stopOnFirstError)
         @task = task
+        @build = build
         @threadPool = threadPool
         @stopOnFirstError = stopOnFirstError
       end
@@ -1713,35 +1730,25 @@ module Makr
           UpdateTraverser.timeToBuildDownRemaining -= @task.updateDuration / @threadPool.nrOfThreads
         end
 
-        if @task.updateError then
-
-          @task.handleUpdateError()
-          @task.dependantTasks.each do |dependantTask|
-            dependantTask.updateError = true if dependantTask.updateMark
-          end
-
+        if @task.dependencyHadUpdateError() then
+          puts "\n\n\n\n\ndependency error in #{@task.name}\n\n\n\n"
+          @task.deleteTargets()
+          @task.setErrorState() # set update error on this task too, as a dependency had an error (error propagation)
+        
         else
 
           # do we need to update?
           if (@task.dependencies.empty? or @task.needsUpdate()) and not UpdateTraverser.abortBuild then
-            puts "##### @task.name: " + @task.name + " #### childState: " + childState + " ###### @task.state: " + @task.state
             # we update expected duration when task is updated, so that only the last measured time is used the next time
             t1 = Time.now
             # we always delete targets before update, Task classes that do not want this, should overwrite the function
             @task.deleteTargets()
-            successfulUpdate = @task.update()
+            @task.update()
             @task.updateDuration = (Time.now - t1)
-
-            unless successfulUpdate then
-              @task.dependantTasks.each do |dependantTask|
-                dependantTask.updateError = true if dependantTask.updateMark
-              end
-              UpdateTraverser.abortBuild = true if @stopOnFirstError
-            else
-              # we only set child state on inner nodes and if the update was successful (leaf nodes set their state themselves)
-              @task.state = collectChildState(@task) if (not @task.dependencies.empty?)
-            end
+            # check for update error
+            UpdateTraverser.abortBuild = true if @stopOnFirstError and not @task.state
           end
+          @build.registerPostUpdate(@task) # always register for postUpdate
 
         end
 
@@ -1751,7 +1758,7 @@ module Makr
               # if we are the last thread to reach the dependant task, we will run the next thread on it
               dependantTask.dependenciesUpdatedCount = dependantTask.dependenciesUpdatedCount + 1
               if (dependantTask.dependenciesUpdatedCount == dependantTask.dependencies.size) then
-                updater = Updater.new(dependantTask, @threadPool, @stopOnFirstError)
+                updater = Updater.new(dependantTask, @build, @threadPool, @stopOnFirstError)
                 @threadPool.execute {updater.run()}
               end
             end
@@ -1783,7 +1790,7 @@ module Makr
       collectedTasksWithNoDeps.uniq!
       Makr.log.info("collectedTasksWithNoDeps.size: " + collectedTasksWithNoDeps.size.to_s)
       collectedTasksWithNoDeps.each do |noDepsTask|
-        updater = Updater.new(noDepsTask, @threadPool, build.stopOnFirstError)
+        updater = Updater.new(noDepsTask, build, @threadPool, build.stopOnFirstError)
         @threadPool.execute {updater.run()}
       end
       @threadPool.join()
@@ -1796,7 +1803,6 @@ module Makr
       # prepare the task variables upon descend
       task.updateMark = true
       task.dependenciesUpdatedCount = 0
-      task.updateError = false
       # each task that we mark gets touched by Updater, so we increase timeToBuildDownRemaining by the
       # number of seconds estimated in previous builds (see Updater.run)
       # we scale by the nrOfThreads employed (ok, this is not a linear speedup, but close to it)
