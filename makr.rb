@@ -199,6 +199,7 @@ module Makr
   # form in a file in the build directory (could even be edited by hand).
   class Config
 
+    # doubly linked tree (parent and childs), childs used for cleanup (see class Build)
     attr_reader   :name, :parent, :childs
 
 
@@ -210,7 +211,7 @@ module Makr
     end
 
 
-    # constructs and return a new Config with this config as parent
+    # constructs and return a new Config with this Config as parent
     def makeChild(newName)
       Config.new(newName, self)
     end
@@ -309,7 +310,7 @@ module Makr
     end
 
 
-  protected # comparable to private in C++
+  protected  # comparable to private in C++ (after all, this is my primary language)
 
     def addChild(config)
       @childs.push(config)
@@ -319,7 +320,6 @@ module Makr
     def removeChild(config)
       @childs.delete(config)
     end
-
 
   end
 
@@ -362,6 +362,7 @@ module Makr
       @name = name
       @dependencies = Array.new
       @dependantTasks = Array.new
+      @targets = Array.new
 
       @config = config
 
@@ -374,22 +375,24 @@ module Makr
 
 
     def addDependency(otherTask)
-      if(@dependencies.index(otherTask) == nil)
+      if not @dependencies.index(otherTask) then
         @dependencies.push(otherTask)
         otherTask.dependantTasks.push(self)
+      else
+        # throw an exception ?
+        Makr.log.warn("addDependency: Task with name #{otherTask.name} already exists as a dependency of task #{@name}.")
       end
-      # we dont do anything if a task wants to be added twice, they are unique, maybe we should log this
     end
 
 
     # convenience function for adding a plethora of tasks
     def addDependencies(otherTasks)
-      otherTasks.each {|task| addDependency(task)}
+      otherTasks.each {|task| addDependency(task) if not @dependencies.index(task) }
     end
 
 
     def removeDependency(otherTask)
-      if(@dependencies.index(otherTask) != nil)
+      if @dependencies.index(otherTask) != nil then
         otherTask.dependantTasks.delete(self)
         @dependencies.delete(otherTask)
       else
@@ -424,10 +427,10 @@ module Makr
     # Derived classes are free to override, a return value of true means that an update is necessary.
     def needsUpdate()
       return true if not @state
-      return true if dependencies.empty?
-      childState = concatStateOfDependencies() # a little helper var for the next two test
-      return false if not childState  # if one of our childs has an update error, it does not make sense to update this Task
-      return true if (@state != childState) # this is the central change detection
+      return true if dependencies.empty? # although not called for leaf nodes, we keep this condition for safety
+      dependenciesState = concatStateOfDependencies() # a little helper var for the next two test
+      return false if not dependenciesState  # if one of our deps has an update error, it does not make sense to update
+      return true if (@state != dependenciesState) # this is the central change detection
       return false # otherwise nothing changed and we dont need to update
     end
 
@@ -473,13 +476,14 @@ module Makr
     # parallel on the task graph and should not modify the graph, this function is called on all tasks in a
     # single thread in the sequence they have been updated (which is supposed to resemble the update()-dependency-order),
     # so that no issues with multi-threading can occur. Default behaviour is to concatenate the state of the
-    # dependencies if the update has been successful (@state is not nil) and dependencies exist
+    # dependencies if the update has been successful (@state is not nil) and dependencies exist. This function
+    # is for example overwritten in CompileTask to update the dependency list.
     def postUpdate()
       @state = concatStateOfDependencies() if @state and (not @dependencies.empty?)
     end
 
 
-    # called once before build starts on all tasks of the build
+    # called once before build starts on all tasks of the build (mostly unused)
     def preUpdate()
     end
 
@@ -499,7 +503,12 @@ module Makr
     end
 
 
-    # kind of debugging to_s function
+    def cleanupBeforeDeletion()  # interface mainly for tasks generating targets (removing these)
+      deleteTargets()
+    end
+
+    
+    # kind of debugging-"to_s"-function
     def printDependencies(prefix = "")
       Makr.log.info(prefix + @name + " deps size: " + @dependencies.size.to_s)
       @dependencies.each do |dep|
@@ -507,792 +516,7 @@ module Makr
       end
     end
 
-
-    def cleanupBeforeDeletion()  # interface mainly for tasks generating targets (removing these)
-      deleteTargets()
-    end
-
   end
-
-
-
-
-
-
-  # --
-  # RDoc stops processing comments if it finds a comment line containing '#--'
-  # Commenting can be turned back on with a line that starts '#++'.
-  #
-  # now some basic Task derived classes follow
-  #
-  # ++
-
-
-
-
-
-  # This class represents the dependency on changed strings in a Config, it is used for example in CompileTask
-  class ConfigTask < Task
-
-    # make a unique name for CompileTasks out of the fileName which is to be compiled
-    def ConfigTask.makeName(name)
-      "ConfigTask__" + name
-    end
-
-
-    def initialize(name)
-      super
-    end
-
-
-    def update()
-      # produce a nice message in error case (we want exactly one dependant task)
-      raise "[makr] ConfigTask #{name} does not have a dependant task, but needs one!" if (not (dependantTasks.size == 1))
-      
-      # just update state with config string from the only dependantTask
-      # getConfigString() is supposed to NOT deliver a nil object, but at least an empty String
-      @state = dependantTasks.first.getConfigString() 
-    end
-
-  end
-
-
-
-
-
-
-
-
-  # Represents simple and basic dependencies on a files (could be input or output). set class variable FileTask.useFileHash to
-  # true (default is false) to check file change by md5-summing (is a costly operation)
-  class FileTask < Task
-
-    # this variable states, if file hashes should be used to identify changed files (which can be a costly operation)
-    @@useFileHash = false
-    def FileTask.useFileHash
-      @@useFileHash
-    end
-    def FileTask.useFileHash=(arg)
-      @@useFileHash = arg
-    end
-
-
-    attr_reader :fileName, :time, :size, :fileHash, :missingFileIsError
-    attr_accessor :useFileHash # for setting hash usage individually, overrides class variable
-
-
-    # the boolean argument missingFileIsError can be used to indicate, if an update is necessary, if file is missing 
-    # (which is the "false" case) or if it is an error and the build should abort. In other words: if missingFileIsError
-    # is false, a missing file just means that the update function will return true. This can be used for targets of
-    # the build process (see also class CompileTask for a usage example), to indicate a target that needs to be produced.
-    def initialize(fileName, missingFileIsError = true)
-      @fileName = Makr.cleanPathName(fileName)
-      super(@fileName)
-      # all file attribs stay uninitialized, so that first call to update returns true
-      @time = @size = @fileHash = String.new
-      @missingFileIsError = missingFileIsError
-      Makr.log.debug("made file task with @fileName=\"" + @fileName + "\"")
-    end
-
-
-    def mustBeDeleted?()
-      if (not File.file?(@fileName)) and (@missingFileIsError) then
-          Makr.log.info("mustBeDeleted?() is true for missing file: " + @fileName)
-          return true
-      end
-      return false
-    end
-
-
-    def update()
-      # first check missing file case
-      if (not File.file?(@fileName)) then
-        if @missingFileIsError then # error case
-          Makr.log.error("FileTask #{@name}: file is unexpectedly missing!")
-          @state = nil
-          return
-        end
-        # "success" case
-        Makr.log.debug("FileTask #{@name}: file is missing.")
-        @state = String.new # missing file has no specific state
-        return
-      end
-
-      # now we either use the hash of the file or we use file attributes to determine changes
-      unless @useFileHash.is_a? NilClass then # the local variable overrides class variable if set
-        useFileHash = @useFileHash
-      else
-        useFileHash = @@useFileHash
-      end
-
-      hasChanged = false # used only for output below
-
-      if useFileHash then                     # file hash
-        curHash = MD5.new(open(@fileName, 'rb').read).hexdigest
-        if(@fileHash != curHash)
-          @fileHash = curHash
-          @state = " FileHash: " + @fileHash  # compose state from file state
-          hasChanged = true
-        end
-
-      else                                    # file attribs checking
-        stat = File.stat(@fileName);
-        if (@time != stat.mtime) or (@size != stat.size) then
-          @time = stat.mtime
-          @size = stat.size
-          @state = " File attribs: " + @time.to_s + " " + @size.to_s # compose state from file state
-          hasChanged = true
-        end
-      end
-      Makr.log.debug("FileTask #{@name}: file #{@fileName} has changed.") if hasChanged
-    end
-  
-  end
-
-
-
-
-
-  # Represents a standard compiled source unit that has dependencies to included files (and any deps that a user may specify).
-  # The input files are dependencies on FileTasks including the source itself. Another dependency exists on the
-  # target object file, so that the task rebuilds, if that file was deleted or modified otherwise. Also the
-  # task has a dependency on the Config object that contains the compiler options etc. so that a change in these
-  # also triggers recompilation (see also ConfigTask). The variable CompileTask.checkOnlyUserHeaders controls, wether
-  # dependency checking is extended to system header files or not (the former is more costly, default is not to do
-  # this).
-  class CompileTask < Task
-
-
-    # builds up the string used for calling the compiler out of the given Config (or default values),
-    # the dependencies are not included (this is done in update)
-    def makeCompilerCallString() # g++ is the general default value
-      if @config then
-        Makr.log.debug("CompileTask " + @name + ": config name is: \"" + @config.name + "\"")
-        callString = String.new
-        if (not @config["compiler"]) then
-          Makr.log.warn("CompileTask " + @name + ": no compiler given, using default g++")
-          callString = "g++ "
-        else
-          callString = @config["compiler"] + " "
-        end
-        # now add additionyl flags and options
-        callString += @config["compiler.cFlags"]       + " " if @config["compiler.cFlags"]
-        callString += @config["compiler.defines"]      + " " if @config["compiler.defines"]
-        callString += @config["compiler.includePaths"] + " " if @config["compiler.includePaths"]
-        callString += @config["compiler.otherOptions"] + " " if @config["compiler.otherOptions"]
-        return callString
-      else
-        Makr.log.warn("CompileTask " + @name + ": no config given, using bare g++")
-        return "g++ "
-      end
-    end
-
-    alias :getConfigString :makeCompilerCallString
-
-
-    # this variable influences dependency checking by the compiler ("-M" or "-MM" option)
-    @@checkOnlyUserHeaders = true
-    def CompileTask.checkOnlyUserHeaders
-      @@checkOnlyUserHeaders
-    end
-    def CompileTask.checkOnlyUserHeaders=(arg)
-      @@checkOnlyUserHeaders = arg
-    end
-
-
-    # make a unique name for CompileTasks out of the fileName which is to be compiled
-    def CompileTask.makeName(fileName)
-      "CompileTask__" + fileName
-    end
-
-
-    # we strive to make a unique name even if source files with identical names exist by
-    # taking the whole path and replacing directory seperators with underscores
-    def makeObjectFileName(fileName)
-      # substitution of '_' with '__' prevents collisions
-      @build.buildPath + "/" + fileName.gsub('_', '__').gsub('/', '_').gsub('.', '_') + ".o" 
-    end
-
-
-    # the path of the input and output file of the compilation
-    attr_reader :fileName, :objectFileName
-    attr_accessor :checkOnlyUserHeaders
-
-
-    # arguments: fileName contains the file to be compiled, build references the Build object containing the tasks
-    # (including this one), config is the optional Config, fileIsGenerated specifies that
-    # the file to be compiled is generated (for example by the moc from Qt). If fileIsGenerated is true, the
-    # last argument must contain the task that generates it to add a dependency.
-    # The options accepted in the Config referenced by config could be "compiler", "compiler.cFlags", "compiler.defines"
-    # "compiler.includePaths", "compiler.otherOptions" (see also function makeCompilerCallString() )
-    def initialize(fileName, build, config = nil, fileIsGenerated = false, generatorTask = nil)
-      @fileName = Makr.cleanPathName(fileName)
-      # now we need a unique name for this task. As we're defining a FileTask as dependency to fileName
-      # and a FileTask on the @objectFileName to ensure a build of the target if it was deleted or
-      # otherwise modified (whatever you can think of here), we need a unique name not related to these
-      super(CompileTask.makeName(@fileName), config)
-      @build = build
-
-      # the dep tasks, that are constructed below are not added yet to the dependencies Array as this is done
-      # in buildDependencies(), called before update
-
-      # first construct a dependency on the file itself, if it isnt generated
-      # (we dont add dependencies yet, as they get added upon automatic dependency generation in
-      # the function buildDependencies())
-      @fileIsGenerated = fileIsGenerated
-      @generatorTaskDep = generatorTask
-      if not @fileIsGenerated then
-        if not @build.hasTask?(@fileName) then
-          @compileFileDep = FileTask.new(@fileName)
-          @build.addTask(@fileName, @compileFileDep)
-        else
-          @compileFileDep = @build.getTask(@fileName)
-        end
-      end
-
-      # construct a dependency task on the target object file
-      @objectFileName = makeObjectFileName(fileName)
-      if not @build.hasTask?(@objectFileName) then
-        @compileTargetDep = FileTask.new(@objectFileName, false)
-        @build.addTask(@objectFileName, @compileTargetDep)
-      else
-        @compileTargetDep = @build.getTask(@objectFileName)
-      end
-      @targets = [@objectFileName] # set targets produced by this task
-      deleteTargets() # delete targets upon construction to guarantee a first update
-
-      # construct a dependency task on the configuration
-      @configTaskDepName = ConfigTask.makeName(@name)
-      if not @build.hasTask?(@configTaskDepName) then
-        @configTaskDep = ConfigTask.new(@configTaskDepName)
-        @build.addTask(@configTaskDepName, @configTaskDep)
-      else
-        @configTaskDep = @build.getTask(@configTaskDepName)
-      end
-      
-      buildDependencies()
-
-      Makr.log.debug("made CompileTask with @name=\"" + @name + "\"") # debug feedback
-    end
-
-
-    # calls compiler with complete configuration options to automatically generate a list of dependency files
-    # the list is parsed in buildDependencies()
-    # Parsing is seperated from dependency generation because during the update step we also check
-    # dependencies but do no rebuild them as the tree should not be changed during multi-threaded update
-    # function return true, if successful, false otherwise
-    def getDepsStringArrayFromCompiler()
-      # always clear input lines upon call
-      @dependencyLines = nil
-
-      # then check, if we need to to
-      if (@fileIsGenerated and (not File.file?(@fileName))) then
-        Makr.log.error("generated file is missing: #{@fileName}")
-        return false
-      end
-
-      # now we check, if we also want system header deps
-      # the local variable overrides class variable if set
-      checkOnlyUserHeaders = (@checkOnlyUserHeaders)? @checkOnlyUserHeaders : @@checkOnlyUserHeaders
-      # system headers are excluded using compiler option "-MM", else "-M"
-      depCommand = makeCompilerCallString() + ((checkOnlyUserHeaders)?" -MM ":" -M ") + @fileName
-
-      Makr.log.info("Executing compiler to check for dependencies in CompileTask: \"" + @name + "\"\n\t" + depCommand)
-      compilerPipe = IO.popen(depCommand)  # in ruby >= 1.9.2 we could use Open3.capture2(...) for this purpose
-      @dependencyLines = compilerPipe.readlines
-      compilerPipe.close
-      if $?.exitstatus != 0 then # $? is thread-local, so this should be safe in multi-threaded update
-        Makr.log.fatal( "error #{$?.exitstatus} in CompileTask for file \"" + @fileName +
-                        "\" making dependencies failed, check file for syntax errors!")
-        return false # error case
-      end
-      return true # success case
-    end
-
-
-    # parses the dependency files generated by the compiler in getDepsStringArrayFromCompiler().
-    # Parsing is seperated from dependency generation because during the update step we also check
-    # dependencies but do no rebuild them as the tree should not be changed during multi-threaded update
-    def buildDependencies()
-      clearDependencies()
-
-      # first we add the constructed dependencies as we simply cleared *all* deps before
-      addDependency(@compileFileDep) if not @fileIsGenerated
-      addDependency(@compileTargetDep)
-      addDependency(@configTaskDep)
-      addDependency(@generatorTaskDep) if @fileIsGenerated
-
-      # compiler generated deps
-      return if not @dependencyLines # only go on if we havem
-      dependencyFiles = Array.new
-      @dependencyLines.each do |depLine|
-        depLine.strip! # remove white space and newlines
-        # remove backslash on each line, if present (GCC output is guaranteed to produce only a single backslash at line end)
-        if depLine.include?('\\') then 
-          depLine.chop!
-        end
-        if depLine.include?(':') # the "xyz.o"-target specified by the compiler in the "Makefile"-rule needs to be skipped
-          splitArr = depLine.split(": ")
-          dependencyFiles.concat(splitArr[1].split(" ")) if splitArr[1]
-        else
-          dependencyFiles.concat(depLine.split(" "))
-        end
-      end
-      dependencyFiles.each do |depFile|
-        depFile.strip!
-        next if depFile.empty?
-        depFile = Makr.cleanPathName(depFile)
-        next if (depFile == @fileName) # go on if dependency on source file encountered
-        if @build.hasTask?(depFile) then
-          task = @build.getTask(depFile)
-          if not @dependencies.include?(task)
-            addDependency(task)
-          end
-        elsif (task = @build.getTaskForTarget(depFile)) then
-          if not @dependencies.include?(task)
-            addDependency(task)
-          end
-        else
-          task = FileTask.new(depFile)
-          @build.addTask(depFile, task)
-          addDependency(task)
-        end
-        task.update()
-      end
-
-    end
-
-
-    def update()
-      @state = nil # first set state to unsuccessful build
-
-      # here we execute the compiler to deliver an update on the dependent includes before compilation. We could do this
-      # in postUpdate, too, but we assume this to be faster, as the files should be in OS cache afterwards and
-      # thus the compilation (which is the next step) should be faster
-      return if not getDepsStringArrayFromCompiler()
-
-      # construct compiler command and execute it
-      compileCommand = makeCompilerCallString() + " -c " + @fileName + " -o " + @objectFileName
-      Makr.log.info("CompileTask #{@name}: Executing compiler\n\t" + compileCommand)
-      successful = system(compileCommand)
-      Makr.log.error("Error in CompileTask #{@name}") if not successful
-      @compileTargetDep.update() # update file information on the compiled target in any case
-
-      # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
-      @state = concatStateOfDependencies() if successful 
-    end
-
-
-    def postUpdate()
-      buildDependencies()  # assuming we have called the compiler already in update giving us the deps strings
-      super
-    end
-
-  end
-
-
-
-
-
-
-
-
-
-  # TODO: there are some comonalities in the following classes, use mixins?
-  #       (replacing "ProgramTask.makeName" with "self.class.makeName" for example)
-
-
-
-
-  # This class constructs a dynamic library.
-  # Creating a dynamic lib requires compiling the object files with -fPIC or -fpic flag handed to the compiler
-  # (this is checked upon update() !).
-  class DynamicLibTask < Task
-
-    # special dynamic lib thingies (see http://www.faqs.org/docs/Linux-HOWTO/Program-Library-HOWTO.html)
-
-
-    attr_reader    :libName  # basename of the lib to be build
-    attr_reader    :libFileName  # full path of the lib to be build (but not necessarily absolute path, depends on user)
-
-
-    # make a unique name
-    def DynamicLibTask.makeName(libName)
-       "DynamicLibTask__" + libName
-    end
-
-
-    # checks each dependency if it includes the compiler flag "-fPIC" or "-fpic", if it is a CompileTask
-    def checkDependencyTasksForPIC()
-      @dependencies.each do |dep|
-        if dep.kind_of?(CompileTask) then
-          raise "[makr] DynamicLibTask wants configName in dependency CompileTask #{dep.name}!" if not dep.config
-          if (not (dep.config["compiler.cFlags"].include?("-fPIC") or dep.config["compiler.cFlags"].include?("-fpic"))) then
-            raise( "[makr] DynamicLibTask wants -fPIC or -fpic in config[\"compiler.cFlags\"] of dependency CompileTasks!" +
-                    " error occured in CompileTask " + dep.name)
-          end
-        end
-      end
-    end
-
-
-    def makeLinkerCallString() # g++ is always default value
-      if @config then
-        Makr.log.debug("DynamicLibTask " + @name + ": config name is: \"" + @config.name + "\"")
-        callString = String.new
-        if (not @config["linker"]) then
-          Makr.log.warn("no linker command given, using default g++")
-          callString = "g++ "
-        else
-          callString = @config["linker"] + " "
-        end
-        # now add other flags and options
-        callString += @config["linker.lFlags"]       + " " if @config["linker.lFlags"]
-        callString += @config["linker.libPaths"]     + " " if @config["linker.libPaths"]
-        callString += @config["linker.libs"]         + " " if @config["linker.libs"]
-        callString += @config["linker.otherOptions"] + " " if @config["linker.otherOptions"]
-        # add mandatory "-shared" etc if necessary
-        callString += " -shared " if not callString.include?("-shared")
-        callString += (" -Wl,-soname," + @libName) if not callString.include?("-soname")
-        return callString
-      else
-        Makr.log.warn("no config given, using bare linker g++")
-        return "g++ -shared -Wl,-soname," + @libName
-      end
-    end
-
-    alias :getConfigString :makeLinkerCallString
-
-
-    # libFileName should be the complete path (absolute or relative) of the library with all standard fuss, like
-    # "build/libxy.so.1.2.3"
-    # (if you want a different soname for the lib, pass it as option with the config,
-    # for example like this: config["linker.otherOptions"]=" -Wl,-soname,libSpecialName.so.1")
-    # The options accepted in the config could be "linker", "linker.lFlags",
-    # "linker.libs" and "linker.otherOptions" (see also function makeLinkerCallString() ).
-    def initialize(libFileName, build, config = nil)
-      @libFileName = Makr.cleanPathName(libFileName)
-      @libName = File.basename(@libFileName)
-      super(DynamicLibTask.makeName(@libFileName), config)
-      @build = build
-
-      # we need a dep on the lib target
-      if not @build.hasTask?(@libFileName) then
-        @libTargetDep = FileTask.new(@libFileName, false)
-        @build.addTask(@libFileName, @libTargetDep)
-      else
-        @libTargetDep = @build.getTask(@libFileName)
-      end
-      addDependency(@libTargetDep)
-      @targets = [@libFileName]
-
-      # now add another dependency task on the config
-      @configDepName = ConfigTask.makeName(@libFileName)
-      if not @build.hasTask?(@configDepName) then
-        @configDep = ConfigTask.new(@configDepName)
-        @build.addTask(@configDepName, @configDep)
-      else
-        @configDep = @build.getTask(@configDepName)
-      end
-      addDependency(@configDep)
-
-      Makr.log.debug("made DynamicLibTask with @name=\"" + @name + "\"")
-    end
-
-
-    def update()
-      @state = nil # first set state to unsuccessful build
-      
-      # we always check for properly setup dependencies
-      checkDependencyTasksForPIC()
-      # build compiler command and execute it
-      linkCommand = makeLinkerCallString() + " -o " + @libFileName
-      @dependencies.each do |dep|
-        # we only want dependencies that provide an object file
-        linkCommand += " " + dep.objectFileName if (dep.respond_to?(:objectFileName) and dep.objectFileName)
-      end
-      Makr.log.info("Building DynamicLibTask #{@name}\n\t" + linkCommand)
-      successful = system(linkCommand)
-      Makr.log.error("Error in DynamicLibTask #{@name}") if not successful
-      @libTargetDep.update() # update file information on the compiled target in any case
-
-      # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
-      @state = concatStateOfDependencies() if successful 
-    end
-
-  end
-
-
-
-
-
-  # constructs a dynamic lib target with the given taskCollection as dependencies, takes an optional libConfig
-  # for configuration options. Sets default task in build!
-  def Makr.makeDynamicLib(libFileName, build, taskCollection, libConfig = nil)
-    libFileName = Makr.cleanPathName(libFileName)
-    libTaskName = DynamicLibTask.makeName(libFileName)
-    if not build.hasTask?(libTaskName) then
-      build.addTask(libTaskName, DynamicLibTask.new(libFileName, build, libConfig))
-    end
-    libTask = build.getTask(libTaskName)
-    libTask.addDependencies(taskCollection)
-    build.defaultTask = libTask # set this as default task in build
-    return libTask
-  end
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  # This class constructs a static library. No special flags are needed as compared to DynamicLibTask regarding
-  # the CompileTasks.
-  class StaticLibTask < Task
-    # special static lib thingies (see http://www.faqs.org/docs/Linux-HOWTO/Program-Library-HOWTO.html)
-    # standard construction is: "ar rcs my_library.a file1.o file2.o ..."
-
-    attr_reader    :libName  # basename of the lib to be build
-    attr_reader    :libFileName  # path of the lib to be build (does not need to be absolute)
-
-
-    # make a unique name
-    def StaticLibTask.makeName(libName)
-       "StaticLibTask__" + libName
-    end
-
-
-    def makeLinkerCallString() # "ar rcs" is default value
-      if @config then
-        Makr.log.debug("StaticLibTask " + @name + ": config name is: \"" + @config.name + "\"")
-        @config = @build.getConfig(@@configName)
-        callString = String.new
-        if (not @config["linker"]) then
-          Makr.log.warn("no linker command given, using default ar")
-          callString = "ar rcs "
-        else
-          callString = @config["linker"] + " "
-        end
-        return callString
-      else
-        Makr.log.warn("no @config given, using bare linker ar")
-        return "ar rcs "
-      end
-    end
-
-    alias :getConfigString :makeLinkerCallString
-
-
-    # libFileName should be the complete path (absolute or relative) of the library with all standard fuss, like "build/libxy.a".
-    # Specifying a config is typically unnecessary, the only entry respected is config["linker"].
-    def initialize(libFileName, build, config)
-      @libFileName = Makr.cleanPathName(libFileName)
-      @libName = File.basename(@libFileName)
-      super(StaticLibTask.makeName(@libFileName), config)
-      @build = build
-
-      # first we need a dependency on the target
-      if not @build.hasTask?(@libFileName) then
-        @libTargetDep = FileTask.new(@libFileName, false)
-        @build.addTask(@libFileName, @libTargetDep)
-      else
-        @libTargetDep = @build.getTask(@libFileName)
-      end
-      addDependency(@libTargetDep)
-      @targets = [@libFileName]
-
-      # now add another dependency task on the config
-      @configDepName = ConfigTask.makeName(@libFileName)
-      if not @build.hasTask?(@configDepName) then
-        @configDep = ConfigTask.new(@configDepName)
-        @build.addTask(@configDepName, @configDep)
-      else
-        @configDep = @build.getTask(@configDepName)
-      end
-      addDependency(@configDep)
-
-      Makr.log.debug("made StaticLibTask with @name=\"" + @name + "\"")
-    end
-
-
-    def update()
-      @state = nil # first set state to unsuccessful build
-      
-      # build compiler command and execute it
-      linkCommand = makeLinkerCallString() + @libFileName
-      @dependencies.each do |dep|
-        # we only want dependencies that provide an object file
-        linkCommand += " " + dep.objectFileName if (dep.respond_to?(:objectFileName) and dep.objectFileName)
-      end
-      Makr.log.info("Building StaticLibTask \"#{name}\"\n\t" + linkCommand)
-      successful = system(linkCommand)
-      Makr.log.error("Error in StaticLibTask #{@name}") if not successful
-      @libTargetDep.update() # update file information on the compiled target in any case
-
-      # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
-      @state = concatStateOfDependencies() if successful 
-    end
-
-  end
-
-
-
-
-  # constructs a static lib target with the given taskCollection as dependencies, takes an optional libConfig
-  # for configuration options. Sets default task in build!
-  def Makr.makeStaticLib(libFileName, build, taskCollection, libConfig = nil)
-    libFileName = Makr.cleanPathName(libFileName)
-    libTaskName = StaticLibTask.makeName(libFileName)
-    if not build.hasTask?(libTaskName) then
-      build.addTask(libTaskName, StaticLibTask.new(libFileName, build, libConfig))
-    end
-    libTask = build.getTask(libTaskName)
-    libTask.addDependencies(taskCollection)
-    build.defaultTask = libTask # set this as default task in build
-    return libTask
-  end
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  # This class represents a task that builds a program binary made up from all dependencies that
-  # define an objectFileName-member.
-  class ProgramTask < Task
-
-    attr_reader    :programName  # identifies the binary to be build, wants full path as usual
-
-
-    # make a unique name for ProgramTasks out of the programName which is to be compiled
-    # expects a Pathname or a String
-    def ProgramTask.makeName(programName)
-       "ProgramTask__" + programName
-    end
-
-
-    def makeLinkerCallString() # g++ is always default value
-      if @config then
-        Makr.log.debug("ProgramTask " + @name + ": config name is: \"" + @config.name + "\"")
-        callString = String.new
-        if (not @config["linker"]) then
-          Makr.log.warn("no linker command given, using default g++")
-          callString = "g++ "
-        else
-          callString = @config["linker"] + " "
-        end
-        # now add other flags and options
-        callString += @config["linker.lFlags"]       + " " if @config["linker.lFlags"]
-        callString += @config["linker.libPaths"]     + " " if @config["linker.libPaths"]
-        callString += @config["linker.libs"]         + " " if @config["linker.libs"]
-        callString += @config["linker.otherOptions"] + " " if @config["linker.otherOptions"]
-        return callString
-      else
-        Makr.log.warn("no config given, using bare linker g++")
-        return "g++ "
-      end
-    end
-
-    alias :getConfigString :makeLinkerCallString
-
-
-    # The options accepted in the config could be "linker", "linker.lFlags",
-    # "linker.libs" and "linker.otherOptions" (see also function makeLinkerCallString() ).
-    def initialize(programName, build, config)
-      @programName = Makr.cleanPathName(programName)
-      super(ProgramTask.makeName(@programName), config)
-      @build = build
-
-      # first we make dependency on the target program file
-      if not @build.hasTask?(@programName) then
-        @targetDep = FileTask.new(@programName, false)
-        @build.addTask(@programName, @targetDep)
-      else
-        @targetDep = @build.getTask(@programName)
-      end
-      addDependency(@targetDep)
-      @targets = [@programName]
-
-      # now add another dependency task on the config
-      @configDepName = ConfigTask.makeName(@programName)
-      if not @build.hasTask?(@configDepName) then
-        @configDep = ConfigTask.new(@configDepName)
-        @build.addTask(@configDepName, @configDep)
-      else
-        @configDep = @build.getTask(@configDepName)
-      end
-      addDependency(@configDep)
-
-      Makr.log.debug("made ProgramTask with @name=\"" + @name + "\"")
-    end
-
-
-    def update()
-      @state = nil # first set state to unsuccessful build
-
-      # build compiler command and execute it
-      linkCommand = makeLinkerCallString() + " -o " + @programName
-      @dependencies.each do |dep|
-        # we only want dependencies that provide an object file
-        linkCommand += " " + dep.objectFileName if (dep.respond_to?(:objectFileName) and dep.objectFileName)
-      end
-      Makr.log.info("Building ProgramTask \"" + @name + "\"\n\t" + linkCommand)
-      successful = system(linkCommand)
-      Makr.log.error("Error in ProgramTask #{@name}") if not successful
-      @targetDep.update() # update file information on the compiled target in any case
-
-      # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
-      @state = concatStateOfDependencies() if successful 
-    end
-
-  end
-
-
-
-  # constructs a ProgramTask with the given taskCollection as dependencies, takes an optional programConfig
-  # for configuration options. Sets default task in build!
-  def Makr.makeProgram(progName, build, taskCollection, programConfig = nil)
-    progName = Makr.cleanPathName(progName)
-    programTaskName = ProgramTask.makeName(progName)
-    if not build.hasTask?(programTaskName) then
-      build.addTask(programTaskName, ProgramTask.new(progName, build, programConfig))
-    end
-    progTask = build.getTask(programTaskName)
-    progTask.addDependencies(taskCollection)
-    build.defaultTask = progTask # set this as default task in build
-    return progTask
-  end
-
-
-
-
-
-
 
 
 
@@ -1378,7 +602,7 @@ module Makr
             end
             effectiveTask = tasksFound.first
           else
-            raise "failed with all fallbacks in Build.build"
+            raise "[makr] failed with all fallbacks in Build.build"
           end
         end
       end
@@ -1413,7 +637,7 @@ module Makr
     # (which typically amounts to the compilation of a single file)
     def buildTasksForFile(fileName)
       if not @fileHash[fileName]
-        raise "fileName not found in buildTasksForFile(fileName), maybe you added tasks without using Generators or" \
+        raise "[makr] fileName not found in buildTasksForFile(fileName), maybe you added tasks without using Generators or" \
               " the ones you used are not compliant"
       end
       @fileHash[fileName].each do |task|
@@ -1830,8 +1054,801 @@ module Makr
 
 
 
-  # build construction helper classes
+  
 
+  # --
+  # [ RDoc stops processing comments if it finds a comment line containing '#--'
+  # Commenting can be turned back on with a line that starts '#++'. ]
+  #
+  # now some basic classes follow that are derived from Task
+  #
+  # ++
+
+
+
+
+
+  # This class represents the dependency on changed strings in a Config, it is used for example in CompileTask
+  class ConfigTask < Task
+
+    # make a unique name for CompileTasks out of the fileName which is to be compiled
+    def ConfigTask.makeName(name)
+      "ConfigTask__" + name
+    end
+
+
+    def initialize(name)
+      super
+    end
+
+
+    def update()
+      # produce a nice message in error case (we want exactly one dependant task)
+      raise "[makr] ConfigTask #{name} does not have a dependant task, but needs one!" if (not (dependantTasks.size == 1))
+
+      # just update state with config string from the only dependantTask
+      # getConfigString() is supposed to NOT deliver a nil object, but at least an empty String
+      @state = dependantTasks.first.getConfigString()
+    end
+
+  end
+
+
+
+
+
+
+
+
+  # Represents simple and basic dependencies on a files (could be input or output). set class variable FileTask.useFileHash to
+  # true (default is false) to check file change by md5-summing (is a costly operation)
+  class FileTask < Task
+
+    # this variable states, if file hashes should be used to identify changed files (which can be a costly operation)
+    @@useFileHash = false
+    def FileTask.useFileHash
+      @@useFileHash
+    end
+    def FileTask.useFileHash=(arg)
+      @@useFileHash = arg
+    end
+
+
+    attr_reader :fileName, :time, :size, :fileHash, :missingFileIsError
+    attr_accessor :useFileHash # for setting hash usage individually, overrides class variable
+
+
+    # the boolean argument missingFileIsError can be used to indicate, if an update is necessary, if file is missing
+    # (which is the "false" case) or if it is an error and the build should abort. In other words: if missingFileIsError
+    # is false, a missing file just means that the update function will return true. This can be used for targets of
+    # the build process (see also class CompileTask for a usage example), to indicate a target that needs to be produced.
+    def initialize(fileName, missingFileIsError = true)
+      @fileName = Makr.cleanPathName(fileName)
+      super(@fileName)
+      # all file attribs stay uninitialized, so that first call to update returns true
+      @time = @size = @fileHash = String.new
+      @missingFileIsError = missingFileIsError
+      Makr.log.debug("made file task with @fileName=\"" + @fileName + "\"")
+    end
+
+
+    def mustBeDeleted?()
+      if (not File.file?(@fileName)) and (@missingFileIsError) then
+          Makr.log.info("mustBeDeleted?() is true for missing file: " + @fileName)
+          return true
+      end
+      return false
+    end
+
+
+    def update()
+      # first check missing file case
+      if (not File.file?(@fileName)) then
+        if @missingFileIsError then # error case
+          Makr.log.error("FileTask #{@name}: file is unexpectedly missing!")
+          @state = nil
+          return
+        end
+        # "success" case
+        Makr.log.debug("FileTask #{@name}: file is missing.")
+        @state = String.new # missing file has no specific state
+        return
+      end
+
+      # now we either use the hash of the file or we use file attributes to determine changes
+      unless @useFileHash.is_a? NilClass then # the local variable overrides class variable if set
+        useFileHash = @useFileHash
+      else
+        useFileHash = @@useFileHash
+      end
+
+      hasChanged = false # used only for output below
+
+      if useFileHash then                     # file hash
+        curHash = MD5.new(open(@fileName, 'rb').read).hexdigest
+        if(@fileHash != curHash)
+          @fileHash = curHash
+          @state = " FileHash: " + @fileHash  # compose state from file state
+          hasChanged = true
+        end
+
+      else                                    # file attribs checking
+        stat = File.stat(@fileName);
+        if (@time != stat.mtime) or (@size != stat.size) then
+          @time = stat.mtime
+          @size = stat.size
+          @state = " File attribs: " + @time.to_s + " " + @size.to_s # compose state from file state
+          hasChanged = true
+        end
+      end
+      Makr.log.debug("FileTask #{@name}: file #{@fileName} has changed.") if hasChanged
+    end
+
+  end
+
+
+
+
+
+  # Represents a standard compiled source unit that has dependencies to included files (and any deps that a user may specify).
+  # The input files are dependencies on FileTasks including the source itself. Another dependency exists on the
+  # target object file, so that the task rebuilds, if that file was deleted or modified otherwise. Also the
+  # task has a dependency on the Config object that contains the compiler options etc. so that a change in these
+  # also triggers recompilation (see also ConfigTask). The variable CompileTask.checkOnlyUserHeaders controls, wether
+  # dependency checking is extended to system header files or not (the former is more costly, default is not to do
+  # this).
+  class CompileTask < Task
+
+
+    # builds up the string used for calling the compiler out of the given Config (or default values),
+    # the dependencies are not included (this is done in update)
+    def makeCompilerCallString() # g++ is the general default value
+      if @config then
+        Makr.log.debug("CompileTask " + @name + ": config name is: \"" + @config.name + "\"")
+        callString = String.new
+        if (not @config["compiler"]) then
+          Makr.log.warn("CompileTask " + @name + ": no compiler given, using default g++")
+          callString = "g++ "
+        else
+          callString = @config["compiler"] + " "
+        end
+        # now add additionyl flags and options
+        callString += @config["compiler.cFlags"]       + " " if @config["compiler.cFlags"]
+        callString += @config["compiler.defines"]      + " " if @config["compiler.defines"]
+        callString += @config["compiler.includePaths"] + " " if @config["compiler.includePaths"]
+        callString += @config["compiler.otherOptions"] + " " if @config["compiler.otherOptions"]
+        return callString
+      else
+        Makr.log.warn("CompileTask " + @name + ": no config given, using bare g++")
+        return "g++ "
+      end
+    end
+
+    alias :getConfigString :makeCompilerCallString
+
+
+    # this variable influences dependency checking by the compiler ("-M" or "-MM" option)
+    @@checkOnlyUserHeaders = true
+    def CompileTask.checkOnlyUserHeaders
+      @@checkOnlyUserHeaders
+    end
+    def CompileTask.checkOnlyUserHeaders=(arg)
+      @@checkOnlyUserHeaders = arg
+    end
+
+
+    # make a unique name for CompileTasks out of the fileName which is to be compiled
+    def CompileTask.makeName(fileName)
+      "CompileTask__" + fileName
+    end
+
+
+    # we strive to make a unique name even if source files with identical names exist by
+    # taking the whole path and replacing directory seperators with underscores
+    def makeObjectFileName(fileName)
+      # substitution of '_' with '__' prevents collisions
+      @build.buildPath + "/" + fileName.gsub('_', '__').gsub('/', '_').gsub('.', '_') + ".o"
+    end
+
+
+    # the path of the input and output file of the compilation
+    attr_reader :fileName, :objectFileName
+    attr_accessor :checkOnlyUserHeaders
+
+
+    # arguments: fileName contains the file to be compiled, build references the Build object containing the tasks
+    # (including this one), config is the optional Config, fileIsGenerated specifies that
+    # the file to be compiled is generated (for example by the moc from Qt). If fileIsGenerated is true, the
+    # last argument must contain the task that generates it to add a dependency.
+    # The options accepted in the Config referenced by config could be "compiler", "compiler.cFlags", "compiler.defines"
+    # "compiler.includePaths", "compiler.otherOptions" (see also function makeCompilerCallString() )
+    def initialize(fileName, build, config = nil, fileIsGenerated = false, generatorTask = nil)
+      @fileName = Makr.cleanPathName(fileName)
+      # now we need a unique name for this task. As we're defining a FileTask as dependency to fileName
+      # and a FileTask on the @objectFileName to ensure a build of the target if it was deleted or
+      # otherwise modified (whatever you can think of here), we need a unique name not related to these
+      super(CompileTask.makeName(@fileName), config)
+      @build = build
+
+      # the dep tasks, that are constructed below are not added yet to the dependencies Array as this is done
+      # in buildDependencies(), called before update
+
+      # first construct a dependency on the file itself, if it isnt generated
+      # (we dont add dependencies yet, as they get added upon automatic dependency generation in
+      # the function buildDependencies())
+      @fileIsGenerated = fileIsGenerated
+      @generatorTaskDep = generatorTask
+      if not @fileIsGenerated then
+        if not @build.hasTask?(@fileName) then
+          @compileFileDep = FileTask.new(@fileName)
+          @build.addTask(@fileName, @compileFileDep)
+        else
+          @compileFileDep = @build.getTask(@fileName)
+        end
+      end
+
+      # construct a dependency task on the target object file
+      @objectFileName = makeObjectFileName(fileName)
+      if not @build.hasTask?(@objectFileName) then
+        @compileTargetDep = FileTask.new(@objectFileName, false)
+        @build.addTask(@objectFileName, @compileTargetDep)
+      else
+        @compileTargetDep = @build.getTask(@objectFileName)
+      end
+      @targets = [@objectFileName] # set targets produced by this task
+      deleteTargets() # delete targets upon construction to guarantee a first update
+
+      # construct a dependency task on the configuration
+      @configTaskDepName = ConfigTask.makeName(@name)
+      if not @build.hasTask?(@configTaskDepName) then
+        @configTaskDep = ConfigTask.new(@configTaskDepName)
+        @build.addTask(@configTaskDepName, @configTaskDep)
+      else
+        @configTaskDep = @build.getTask(@configTaskDepName)
+      end
+
+      buildDependencies()
+
+      Makr.log.debug("made CompileTask with @name=\"" + @name + "\"") # debug feedback
+    end
+
+
+    # calls compiler with complete configuration options to automatically generate a list of dependency files
+    # the list is parsed in buildDependencies()
+    # Parsing is seperated from dependency generation because during the update step we also check
+    # dependencies but do no rebuild them as the tree should not be changed during multi-threaded update
+    # function return true, if successful, false otherwise
+    def getDepsStringArrayFromCompiler()
+      # always clear input lines upon call
+      @dependencyLines = nil
+
+      # then check, if we need to to
+      if (@fileIsGenerated and (not File.file?(@fileName))) then
+        Makr.log.error("generated file is missing: #{@fileName}")
+        return false
+      end
+
+      # now we check, if we also want system header deps
+      # the local variable overrides class variable if set
+      checkOnlyUserHeaders = (@checkOnlyUserHeaders)? @checkOnlyUserHeaders : @@checkOnlyUserHeaders
+      # system headers are excluded using compiler option "-MM", else "-M"
+      depCommand = makeCompilerCallString() + ((checkOnlyUserHeaders)?" -MM ":" -M ") + @fileName
+
+      Makr.log.info("Executing compiler to check for dependencies in CompileTask: \"" + @name + "\"\n\t" + depCommand)
+      compilerPipe = IO.popen(depCommand)  # in ruby >= 1.9.2 we could use Open3.capture2(...) for this purpose
+      @dependencyLines = compilerPipe.readlines
+      compilerPipe.close
+      if $?.exitstatus != 0 then # $? is thread-local, so this should be safe in multi-threaded update
+        Makr.log.fatal( "error #{$?.exitstatus} in CompileTask for file \"" + @fileName +
+                        "\" making dependencies failed, check file for syntax errors!")
+        return false # error case
+      end
+      return true # success case
+    end
+
+
+    # parses the dependency files generated by the compiler in getDepsStringArrayFromCompiler().
+    # Parsing is seperated from dependency generation because during the update step we also check
+    # dependencies but do no rebuild them as the tree should not be changed during multi-threaded update
+    def buildDependencies()
+      clearDependencies()
+
+      # first we add the constructed dependencies as we simply cleared *all* deps before
+      addDependency(@compileFileDep) if not @fileIsGenerated
+      addDependency(@compileTargetDep)
+      addDependency(@configTaskDep)
+      addDependency(@generatorTaskDep) if @fileIsGenerated
+
+      # compiler generated deps
+      return if not @dependencyLines # only go on if we havem
+      dependencyFiles = Array.new
+      @dependencyLines.each do |depLine|
+        depLine.strip! # remove white space and newlines
+        # remove backslash on each line, if present (GCC output is guaranteed to produce only a single backslash at line end)
+        if depLine.include?('\\') then
+          depLine.chop!
+        end
+        if depLine.include?(':') # the "xyz.o"-target specified by the compiler in the "Makefile"-rule needs to be skipped
+          splitArr = depLine.split(": ")
+          dependencyFiles.concat(splitArr[1].split(" ")) if splitArr[1]
+        else
+          dependencyFiles.concat(depLine.split(" "))
+        end
+      end
+      dependencyFiles.each do |depFile|
+        depFile.strip!
+        next if depFile.empty?
+        depFile = Makr.cleanPathName(depFile)
+        next if (depFile == @fileName) # go on if dependency on source file encountered
+        if @build.hasTask?(depFile) then
+          task = @build.getTask(depFile)
+          if not @dependencies.include?(task)
+            addDependency(task)
+          end
+        elsif (task = @build.getTaskForTarget(depFile)) then
+          if not @dependencies.include?(task)
+            addDependency(task)
+          end
+        else
+          task = FileTask.new(depFile)
+          @build.addTask(depFile, task)
+          addDependency(task)
+        end
+        task.update()
+      end
+
+    end
+
+
+    def update()
+      @state = nil # first set state to unsuccessful build
+
+      # here we execute the compiler to deliver an update on the dependent includes before compilation. We could do this
+      # in postUpdate, too, but we assume this to be faster, as the files should be in OS cache afterwards and
+      # thus the compilation (which is the next step) should be faster
+      return if not getDepsStringArrayFromCompiler()
+
+      # construct compiler command and execute it
+      compileCommand = makeCompilerCallString() + " -c " + @fileName + " -o " + @objectFileName
+      Makr.log.info("CompileTask #{@name}: Executing compiler\n\t" + compileCommand)
+      successful = system(compileCommand)
+      Makr.log.error("Error in CompileTask #{@name}") if not successful
+      @compileTargetDep.update() # update file information on the compiled target in any case
+
+      # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
+      @state = concatStateOfDependencies() if successful
+    end
+
+
+    def postUpdate()
+      buildDependencies()  # assuming we have called the compiler already in update giving us the deps strings
+      super
+    end
+
+  end
+
+
+
+
+
+
+
+
+
+  # TODO: there are some comonalities in the following classes, use mixins?
+  #       (replacing "ProgramTask.makeName" with "self.class.makeName" for example)
+
+
+
+
+  # This class constructs a dynamic library.
+  # Creating a dynamic lib requires compiling the object files with -fPIC or -fpic flag handed to the compiler
+  # (this is checked upon update() !).
+  class DynamicLibTask < Task
+
+    # special dynamic lib thingies (see http://www.faqs.org/docs/Linux-HOWTO/Program-Library-HOWTO.html)
+
+
+    attr_reader    :libName  # basename of the lib to be build
+    attr_reader    :libFileName  # full path of the lib to be build (but not necessarily absolute path, depends on user)
+
+
+    # make a unique name
+    def DynamicLibTask.makeName(libName)
+       "DynamicLibTask__" + libName
+    end
+
+
+    # checks each dependency if it includes the compiler flag "-fPIC" or "-fpic", if it is a CompileTask
+    def checkDependencyTasksForPIC()
+      @dependencies.each do |dep|
+        if dep.kind_of?(CompileTask) then
+          raise "[makr] DynamicLibTask wants configName in dependency CompileTask #{dep.name}!" if not dep.config
+          if (not (dep.config["compiler.cFlags"].include?("-fPIC") or dep.config["compiler.cFlags"].include?("-fpic"))) then
+            raise( "[makr] DynamicLibTask wants -fPIC or -fpic in config[\"compiler.cFlags\"] of dependency CompileTasks!" +
+                    " error occured in CompileTask " + dep.name)
+          end
+        end
+      end
+    end
+
+
+    def makeLinkerCallString() # g++ is always default value
+      if @config then
+        Makr.log.debug("DynamicLibTask " + @name + ": config name is: \"" + @config.name + "\"")
+        callString = String.new
+        if (not @config["linker"]) then
+          Makr.log.warn("no linker command given, using default g++")
+          callString = "g++ "
+        else
+          callString = @config["linker"] + " "
+        end
+        # now add other flags and options
+        callString += @config["linker.lFlags"]       + " " if @config["linker.lFlags"]
+        callString += @config["linker.libPaths"]     + " " if @config["linker.libPaths"]
+        callString += @config["linker.libs"]         + " " if @config["linker.libs"]
+        callString += @config["linker.otherOptions"] + " " if @config["linker.otherOptions"]
+        # add mandatory "-shared" etc if necessary
+        callString += " -shared " if not callString.include?("-shared")
+        callString += (" -Wl,-soname," + @libName) if not callString.include?("-soname")
+        return callString
+      else
+        Makr.log.warn("no config given, using bare linker g++")
+        return "g++ -shared -Wl,-soname," + @libName
+      end
+    end
+
+    alias :getConfigString :makeLinkerCallString
+
+
+    # libFileName should be the complete path (absolute or relative) of the library with all standard fuss, like
+    # "build/libxy.so.1.2.3"
+    # (if you want a different soname for the lib, pass it as option with the config,
+    # for example like this: config["linker.otherOptions"]=" -Wl,-soname,libSpecialName.so.1")
+    # The options accepted in the config could be "linker", "linker.lFlags",
+    # "linker.libs" and "linker.otherOptions" (see also function makeLinkerCallString() ).
+    def initialize(libFileName, build, config = nil)
+      @libFileName = Makr.cleanPathName(libFileName)
+      @libName = File.basename(@libFileName)
+      super(DynamicLibTask.makeName(@libFileName), config)
+      @build = build
+
+      # we need a dep on the lib target
+      if not @build.hasTask?(@libFileName) then
+        @libTargetDep = FileTask.new(@libFileName, false)
+        @build.addTask(@libFileName, @libTargetDep)
+      else
+        @libTargetDep = @build.getTask(@libFileName)
+      end
+      addDependency(@libTargetDep)
+      @targets = [@libFileName]
+
+      # now add another dependency task on the config
+      @configDepName = ConfigTask.makeName(@libFileName)
+      if not @build.hasTask?(@configDepName) then
+        @configDep = ConfigTask.new(@configDepName)
+        @build.addTask(@configDepName, @configDep)
+      else
+        @configDep = @build.getTask(@configDepName)
+      end
+      addDependency(@configDep)
+
+      Makr.log.debug("made DynamicLibTask with @name=\"" + @name + "\"")
+    end
+
+
+    def update()
+      @state = nil # first set state to unsuccessful build
+
+      # we always check for properly setup dependencies
+      checkDependencyTasksForPIC()
+      # build compiler command and execute it
+      linkCommand = makeLinkerCallString() + " -o " + @libFileName
+      @dependencies.each do |dep|
+        # we only want dependencies that provide an object file
+        linkCommand += " " + dep.objectFileName if (dep.respond_to?(:objectFileName) and dep.objectFileName)
+      end
+      Makr.log.info("Building DynamicLibTask #{@name}\n\t" + linkCommand)
+      successful = system(linkCommand)
+      Makr.log.error("Error in DynamicLibTask #{@name}") if not successful
+      @libTargetDep.update() # update file information on the compiled target in any case
+
+      # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
+      @state = concatStateOfDependencies() if successful
+    end
+
+  end
+
+
+
+
+
+  # constructs a dynamic lib target with the given taskCollection as dependencies, takes an optional libConfig
+  # for configuration options. Sets default task in build!
+  def Makr.makeDynamicLib(libFileName, build, taskCollection, libConfig = nil)
+    libFileName = Makr.cleanPathName(libFileName)
+    libTaskName = DynamicLibTask.makeName(libFileName)
+    if not build.hasTask?(libTaskName) then
+      build.addTask(libTaskName, DynamicLibTask.new(libFileName, build, libConfig))
+    end
+    libTask = build.getTask(libTaskName)
+    libTask.addDependencies(taskCollection)
+    build.defaultTask = libTask # set this as default task in build
+    return libTask
+  end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  # This class constructs a static library. No special flags are needed as compared to DynamicLibTask regarding
+  # the CompileTasks.
+  class StaticLibTask < Task
+    # special static lib thingies (see http://www.faqs.org/docs/Linux-HOWTO/Program-Library-HOWTO.html)
+    # standard construction is: "ar rcs my_library.a file1.o file2.o ..."
+
+    attr_reader    :libName  # basename of the lib to be build
+    attr_reader    :libFileName  # path of the lib to be build (does not need to be absolute)
+
+
+    # make a unique name
+    def StaticLibTask.makeName(libName)
+       "StaticLibTask__" + libName
+    end
+
+
+    def makeLinkerCallString() # "ar rcs" is default value
+      if @config then
+        Makr.log.debug("StaticLibTask " + @name + ": config name is: \"" + @config.name + "\"")
+        @config = @build.getConfig(@@configName)
+        callString = String.new
+        if (not @config["linker"]) then
+          Makr.log.warn("no linker command given, using default ar")
+          callString = "ar rcs "
+        else
+          callString = @config["linker"] + " "
+        end
+        return callString
+      else
+        Makr.log.warn("no @config given, using bare linker ar")
+        return "ar rcs "
+      end
+    end
+
+    alias :getConfigString :makeLinkerCallString
+
+
+    # libFileName should be the complete path (absolute or relative) of the library with all standard fuss, like "build/libxy.a".
+    # Specifying a config is typically unnecessary, the only entry respected is config["linker"].
+    def initialize(libFileName, build, config)
+      @libFileName = Makr.cleanPathName(libFileName)
+      @libName = File.basename(@libFileName)
+      super(StaticLibTask.makeName(@libFileName), config)
+      @build = build
+
+      # first we need a dependency on the target
+      if not @build.hasTask?(@libFileName) then
+        @libTargetDep = FileTask.new(@libFileName, false)
+        @build.addTask(@libFileName, @libTargetDep)
+      else
+        @libTargetDep = @build.getTask(@libFileName)
+      end
+      addDependency(@libTargetDep)
+      @targets = [@libFileName]
+
+      # now add another dependency task on the config
+      @configDepName = ConfigTask.makeName(@libFileName)
+      if not @build.hasTask?(@configDepName) then
+        @configDep = ConfigTask.new(@configDepName)
+        @build.addTask(@configDepName, @configDep)
+      else
+        @configDep = @build.getTask(@configDepName)
+      end
+      addDependency(@configDep)
+
+      Makr.log.debug("made StaticLibTask with @name=\"" + @name + "\"")
+    end
+
+
+    def update()
+      @state = nil # first set state to unsuccessful build
+
+      # build compiler command and execute it
+      linkCommand = makeLinkerCallString() + @libFileName
+      @dependencies.each do |dep|
+        # we only want dependencies that provide an object file
+        linkCommand += " " + dep.objectFileName if (dep.respond_to?(:objectFileName) and dep.objectFileName)
+      end
+      Makr.log.info("Building StaticLibTask \"#{name}\"\n\t" + linkCommand)
+      successful = system(linkCommand)
+      Makr.log.error("Error in StaticLibTask #{@name}") if not successful
+      @libTargetDep.update() # update file information on the compiled target in any case
+
+      # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
+      @state = concatStateOfDependencies() if successful
+    end
+
+  end
+
+
+
+
+  # constructs a static lib target with the given taskCollection as dependencies, takes an optional libConfig
+  # for configuration options. Sets default task in build!
+  def Makr.makeStaticLib(libFileName, build, taskCollection, libConfig = nil)
+    libFileName = Makr.cleanPathName(libFileName)
+    libTaskName = StaticLibTask.makeName(libFileName)
+    if not build.hasTask?(libTaskName) then
+      build.addTask(libTaskName, StaticLibTask.new(libFileName, build, libConfig))
+    end
+    libTask = build.getTask(libTaskName)
+    libTask.addDependencies(taskCollection)
+    build.defaultTask = libTask # set this as default task in build
+    return libTask
+  end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  # This class represents a task that builds a program binary made up from all dependencies that
+  # define an objectFileName-member.
+  class ProgramTask < Task
+
+    attr_reader    :programName  # identifies the binary to be build, wants full path as usual
+
+
+    # make a unique name for ProgramTasks out of the programName which is to be compiled
+    # expects a Pathname or a String
+    def ProgramTask.makeName(programName)
+       "ProgramTask__" + programName
+    end
+
+
+    def makeLinkerCallString() # g++ is always default value
+      if @config then
+        Makr.log.debug("ProgramTask " + @name + ": config name is: \"" + @config.name + "\"")
+        callString = String.new
+        if (not @config["linker"]) then
+          Makr.log.warn("no linker command given, using default g++")
+          callString = "g++ "
+        else
+          callString = @config["linker"] + " "
+        end
+        # now add other flags and options
+        callString += @config["linker.lFlags"]       + " " if @config["linker.lFlags"]
+        callString += @config["linker.libPaths"]     + " " if @config["linker.libPaths"]
+        callString += @config["linker.libs"]         + " " if @config["linker.libs"]
+        callString += @config["linker.otherOptions"] + " " if @config["linker.otherOptions"]
+        return callString
+      else
+        Makr.log.warn("no config given, using bare linker g++")
+        return "g++ "
+      end
+    end
+
+    alias :getConfigString :makeLinkerCallString
+
+
+    # The options accepted in the config could be "linker", "linker.lFlags",
+    # "linker.libs" and "linker.otherOptions" (see also function makeLinkerCallString() ).
+    def initialize(programName, build, config)
+      @programName = Makr.cleanPathName(programName)
+      super(ProgramTask.makeName(@programName), config)
+      @build = build
+
+      # first we make dependency on the target program file
+      if not @build.hasTask?(@programName) then
+        @targetDep = FileTask.new(@programName, false)
+        @build.addTask(@programName, @targetDep)
+      else
+        @targetDep = @build.getTask(@programName)
+      end
+      addDependency(@targetDep)
+      @targets = [@programName]
+
+      # now add another dependency task on the config
+      @configDepName = ConfigTask.makeName(@programName)
+      if not @build.hasTask?(@configDepName) then
+        @configDep = ConfigTask.new(@configDepName)
+        @build.addTask(@configDepName, @configDep)
+      else
+        @configDep = @build.getTask(@configDepName)
+      end
+      addDependency(@configDep)
+
+      Makr.log.debug("made ProgramTask with @name=\"" + @name + "\"")
+    end
+
+
+    def update()
+      @state = nil # first set state to unsuccessful build
+
+      # build compiler command and execute it
+      linkCommand = makeLinkerCallString() + " -o " + @programName
+      @dependencies.each do |dep|
+        # we only want dependencies that provide an object file
+        linkCommand += " " + dep.objectFileName if (dep.respond_to?(:objectFileName) and dep.objectFileName)
+      end
+      Makr.log.info("Building ProgramTask \"" + @name + "\"\n\t" + linkCommand)
+      successful = system(linkCommand)
+      Makr.log.error("Error in ProgramTask #{@name}") if not successful
+      @targetDep.update() # update file information on the compiled target in any case
+
+      # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
+      @state = concatStateOfDependencies() if successful
+    end
+
+  end
+
+
+
+  # constructs a ProgramTask with the given taskCollection as dependencies, takes an optional programConfig
+  # for configuration options. Sets default task in build!
+  def Makr.makeProgram(progName, build, taskCollection, programConfig = nil)
+    progName = Makr.cleanPathName(progName)
+    programTaskName = ProgramTask.makeName(progName)
+    if not build.hasTask?(programTaskName) then
+      build.addTask(programTaskName, ProgramTask.new(progName, build, programConfig))
+    end
+    progTask = build.getTask(programTaskName)
+    progTask.addDependencies(taskCollection)
+    build.defaultTask = progTask # set this as default task in build
+    return progTask
+  end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  #--
+  #
+  # build construction helper classes
+  #
+  #++
+
+
+  
 
   # Helps collecting files given directories and patterns. All methods are static.
   # I did not use find from ruby standard library, as I needed more flexibility (patterns,
@@ -2017,7 +2034,7 @@ module Makr
 
 
 
-  # loads a Makrfile.rb from the given dir and executes it using Kernel.load and push/pops the current ScriptArguments, so that they are save
+  # loads a Makrfile.rb from the given dir and executes it using Kernel.load and push/pops the current ScriptArguments
   def Makr.makeDir(dir)
     return if UpdateTraverser.abortBuild # check if build was aborted before proceeding
     dir = Makr.cleanPathName(dir)
@@ -2037,15 +2054,50 @@ module Makr
 
 
 
-
-
-  # very simple extension system (plugin system)
+  # very very simple extension system (plugin system)
   def Makr.loadExtension(exName)
-    Kernel.load($makrExtensionsDir + "/" + exName + ".rb")
+    Kernel.load($makrExtensionsDir + "/" + exName + ".rb") # regarding $makrExtensionsDir, see setMakrGlobalVars()
   end
 
 
+  
 
+  #--
+  #
+  # some internal helper functions follow
+  #
+  #++
+  
+
+
+  # some global variable setup
+  def Makr.setMakrGlobalVars()
+    # for the following variable, we care for symlinks only, hardlinks will go wrong
+    # (TODO: maybe we need an environment var here or something hardcoded in this file?)
+    unless File.symlink?(__FILE__) then
+      $makrDir = File.dirname(__FILE__)
+    else
+      makrLinkPath = File.readlink(__FILE__) # makrLinkPath can be absolute or relative!
+      if makrLinkPath.index('/') == 0 then
+        $makrDir = File.dirname(makrLinkPath)
+      else
+        $makrDir = File.dirname(__FILE__) + "/" + File.dirname(makrLinkPath)
+      end
+    end
+    $makrDir = File.expand_path($makrDir) # kill relative paths
+    $makrExtensionsDir = $makrDir + "/extensions"
+  end
+
+
+  # used for clean abortion of build for example through IDEs
+  def Makr.setSignalHandler()
+    abort_handler = Proc.new do
+      Makr.log.fatal("Aborting build on signal USR1 or TERM")
+      Makr.abortBuild()
+    end
+    Signal.trap("USR1", abort_handler)
+    Signal.trap("TERM", abort_handler)
+  end
 
 
 end     # end of module makr ######################################################################################
@@ -2068,38 +2120,17 @@ Makr.log.level = Logger::DEBUG
 Makr.log.formatter = proc { |severity, datetime, progname, msg|
     "[makr #{severity} #{datetime}] [#{Makr::UpdateTraverser.timeToBuildDownRemaining}]    #{msg}\n"
 }
-Makr.log << "\n\nmakr version 1.1\n\n"  # just give short version notice on every startup
-
+# just give short version notice on every startup
+Makr.log << "\n\nmakr version 1.2\n\n"
 # then set the signal handler to allow cooperative aborting of the build process on SIGUSR1 or SIGTERM
-abort_handler = Proc.new do
-  Makr.log.fatal("Aborting build on signal USR1 or TERM")
-  Makr.abortBuild()
-end
-Signal.trap("USR1", abort_handler)
-Signal.trap("TERM", abort_handler)
-
-
+Makr.setSignalHandler()
 # set global vars
-
-# for the following variable, we care for symlinks only, hardlinks will go wrong
-# (TODO: maybe we need an environment var here or something hardcoded in this file?)
-unless File.symlink?(__FILE__) then
-  $makrDir = File.dirname(__FILE__)
-else
-  makrLinkPath = File.readlink(__FILE__) # makrLinkPath can be absolute or relative!
-  if makrLinkPath.index('/') == 0 then
-    $makrDir = File.dirname(makrLinkPath)
-  else
-    $makrDir = File.dirname(__FILE__) + "/" + File.dirname(makrLinkPath)
-  end
-end
-$makrDir = File.expand_path($makrDir) # kill relative paths
-$makrExtensionsDir = $makrDir + "/extensions"
-
-
-# we need a basic ScriptArguments object pushed to stack (kind of dummy holding ARGV)
+Makr.setMakrGlobalVars()
+# we need at least one ScriptArguments object pushed to stack (kind of dummy holding ARGV)
 # we use a relative path here to allow moving of build dir
 Makr.pushArgs(Makr::ScriptArguments.new("./Makrfile.rb", ARGV))
 # then we reuse the makeDir functionality building the current directory
 Makr.makeDir(".")
+
+
 
