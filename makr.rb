@@ -1332,7 +1332,8 @@ module Makr
       # the local variable overrides class variable if set
       checkOnlyUserHeaders = (@checkOnlyUserHeaders)? @checkOnlyUserHeaders : @@checkOnlyUserHeaders
       # system headers are excluded using compiler option "-MM", else "-M"
-      depCommand = makeCompilerCallString() + ((checkOnlyUserHeaders)?" -MM ":" -M ") + @fileName
+      # -MG is for ignoring missing header files, that may be generated (use this ?)
+      depCommand = makeCompilerCallString() + ((checkOnlyUserHeaders)?" -MM ":" -M ") + " -MG " + @fileName
 
       Makr.log.info("Executing compiler to check for dependencies in CompileTask: \"" + @name + "\"\n\t" + depCommand)
       compilerPipe = IO.popen(depCommand)  # in ruby >= 1.9.2 we could use Open3.capture2(...) for this purpose

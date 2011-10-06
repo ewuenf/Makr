@@ -1,20 +1,7 @@
-Fragen/Probleme:
-***************
-
-Was passiert, wenn ein Unterscript beendet wird mit exit?
-  SystemExit-exception, Multithreading scheint ein Problem zu sein
-
-
 TODO:
 *****
 
+  -> Klassen zusammenführen mit ähnlicher Funktionalität: CompileTask, Static/DynamicLibTask, ProgramTask
+  -> Konfiguration mehr auslagern, keine default-werte mehr? (Convenience-Klassen?)
+  -> Beispiele aufsplitten oder alle Möglichkeiten in einem großem Beispiel-Makrfile (oder beides ;-) )
 
-Klassen zusammenführen mit ähnlicher Funktionalität: CompileTask, Static/DynamicLibTask, ProgramTask
-Konfiguration mehr auslagern (Convenience-Klassen?)
-
-Beispiele aufsplitten oder alle Möglichkeiten in einem großem Beispiel-Makrfile (oder beides ;-) )
-Unterprojekte möglichst abgetrennt und testen!!
-
--MMD -MG compiler options ?
-
-preupdate?
