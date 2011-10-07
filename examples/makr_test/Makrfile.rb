@@ -5,6 +5,8 @@
 # first load needed extensions
 Makr.loadExtension("Qt")
 Makr.loadExtension("pkg-config")
+# this is an extension, that is intrusive into main Makr classes (like Build, FileTask,...), use only when really helpful
+Makr.loadExtension("SourceStats")
 
 
 # then decompose arguments

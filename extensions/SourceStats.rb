@@ -6,114 +6,110 @@ module Makr
 
 
 
+  class SourceStats
+
+    @@statsFile = nil
 
 
-
-  # calculates various statistics about source files and produces a statistix file
-  class SourceStatTask < Task
-
-    @@statsFile = File.new("SourceStats.txt")
-
-    # input source file
-    attr_reader :fileName
-
-
-    # make a unique name for a MocTask out of the given fileName
-    def SourceStatTask.makeName(fileName)
-      "SourceStatTask__" + fileName
+    def SourceStats.createStatsFile(fileName)
+      @@statsFile = File.new(fileName, File::CREAT|File::TRUNC|File::RDWR)
     end
 
+    def SourceStats.closeStatsFile()
+      @@statsFile << "\n\nSum of LOCs: " << @@sumOfLOCs << "\n"
+      @@statsFile.close
+      @@statsFile = nil
+    end
 
-    # config is unused right now
-    def initialize(fileName, build, config = nil)
-      @fileName = Makr.cleanPathName(fileName)
-      # now we need a unique name for this task
-      super(SourceStatTask.makeName(@fileName), config)
+    def SourceStats.appendInformation(string)
+      @@statsFile << string if @@statsFile
+    end
 
-      # first we need a dep on the input file
-      if not build.hasTask?(@fileName) then
-        @inputFileDep = FileTask.new(@fileName)
-        build.addTask(@fileName, @inputFileDep)
-      else
-        @inputFileDep = build.getTask(@fileName)
+    @@fileHash = Hash.new
+
+    def SourceStats.appendFiles(fileCollection)
+      fileCollection.each do |fileName|
+        @@fileHash[fileName] = nil # dummy value
       end
-      addDependency(@inputFileDep)
-
-      Makr.log.debug("made SourceStatTask with @name=\"" + @name + "\"")
     end
 
+    def SourceStats.hasFileName?(fileName)
+      @@fileHash.has_key?(fileName)
+    end
+
+    @@sumOfLOCs = 0
+
+    def SourceStats.increaseSumOfLOCs(amount)
+      @@sumOfLOCs += amount
+    end
+
+  end
+
+
+
+  # we modifiy several central classes to be as simple to use as possible (but its intrusive liek this of course)
+
+
+
+  class Build  # modify class from main Makr module
+
+    alias :originalBuildAliasedBySourceStatsExtension :build
+
+    def build(task = nil)
+      fileName = @buildPath + "/SourceStats.txt"
+      SourceStats.createStatsFile(fileName)
+      originalBuildAliasedBySourceStatsExtension(task)
+      SourceStats.closeStatsFile()
+    end
+  end
+
+
+
+
+
+
+  class FileCollector  # modify class from main Makr module
+
+  protected
+
+    class << self # need this construction to replace class method (need to be in singleton class to make the alias)
+      alias :originalPrivateCollectAliasedBySourceStatsExtension :privateCollect
+    end
+
+    def FileCollector.privateCollect(dirName, pattern, exclusionPattern, fileCollection, recurse)
+      originalPrivateCollectAliasedBySourceStatsExtension(dirName, pattern, exclusionPattern, fileCollection, recurse)
+      SourceStats.appendFiles(fileCollection)
+    end
+
+  end
+
+
+
+
+
+
+  class FileTask  # modify class from main Makr module
+
+    alias :originalUpdateAliasedBySourceStatsExtension :update
 
     def update()
-      # determine various stats about the source file
+      originalUpdateAliasedBySourceStatsExtension()
+      return if not SourceStats.hasFileName?(@fileName)
       sourceLines = IO.readlines(@fileName)
       @locCount = 0
       sourceLines.each do |line|
-        @locCount += 1 if line.strip.empty?
+        @locCount += 1 if not line.strip.empty?
       end
-      @@statsFile.append(@fileName + " LOC: " + @locCount) this is too simple but gives the idea
-      return true
+      SourceStats.appendInformation(@fileName + ": LOC " + @locCount.to_s + "\n")
+      SourceStats.increaseSumOfLOCs(@locCount)
     end
-
-
-    # this task wants to be deleted if the file no longer contains the Q_OBJECT macro (TODO is this correct?)
-    def mustBeDeleted?()
-      return (not File.exists?(@fileName))
-    end
-
   end
 
 
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-  # Produces a UicTask for every fileName given
-  class SourceStatTaskGenerator
-
-    def initialize(build)
-      @build = build
-    end
-
-
-    def generate(fileName)
-      Makr.cleanPathName(fileName)
-      sourceStatTaskName = SourceStatTask.makeName(fileName)
-      if not @build.hasTask?(sourceStatTaskName) then
-        sourceStatTask = SourceStatTask.new(fileName, @build, nil)
-        @build.addTask(sourceStatTaskName, sourceStatTask)
-      end
-      sourceStatTask = @build.getTask(sourceStatTaskName)
-      tasks = [sourceStatTask]
-      # now fill fileHash
-      @build.fileHash[fileName] ||= Array.new
-      @build.fileHash[fileName].concat(tasks)
-      @build.fileHash[fileName].uniq!
-      return tasks
-    end
-
-  end
-
-
-
-
-
-
-
-
-
-end     # end of module makr ######################################################################################
+end # end of module Makr
 
 
 
