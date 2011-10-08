@@ -972,7 +972,7 @@ module Makr
             # check for update error
             UpdateTraverser.abortBuild = true if @stopOnFirstError and not @task.state
           end
-          @build.registerPostUpdate(@task) # always register for postUpdate
+          @build.registerPostUpdate(@task) if @task.state
 
         end
 
