@@ -2122,7 +2122,7 @@ Makr.log.formatter = proc { |severity, datetime, progname, msg|
     "[makr #{severity} #{datetime}] [#{Makr::UpdateTraverser.timeToBuildDownRemaining}]    #{msg}\n"
 }
 # just give short version notice on every startup
-Makr.log << "\n\nmakr version 1.2\n\n"
+Makr.log << "\n\nmakr version 1.3\n\n"
 # then set the signal handler to allow cooperative aborting of the build process on SIGUSR1 or SIGTERM
 Makr.setSignalHandler()
 # set global vars
