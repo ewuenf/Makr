@@ -2036,14 +2036,14 @@ module Makr
 
 
   # loads a Makrfile.rb from the given dir and executes it using Kernel.load and push/pops the current ScriptArguments
-  def Makr.makeDir(dir)
+  def Makr.makeDir(dir, additionalArguments = getArgs().arguments.clone)
     return if UpdateTraverser.abortBuild # check if build was aborted before proceeding
     dir = Makr.cleanPathName(dir)
     oldDir = Dir.pwd
     Dir.chdir(dir)
     makrFilePath = "./Makrfile.rb"
     if File.exist?(makrFilePath) then
-      Makr.pushArgs(Makr::ScriptArguments.new(makrFilePath, getArgs().arguments.clone))
+      Makr.pushArgs(Makr::ScriptArguments.new(makrFilePath, additionalArguments))
       Kernel.load(makrFilePath, true)  # second parameter sayz to wrap an anonymous module around the called script content
       popArgs()
     else
