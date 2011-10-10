@@ -507,7 +507,7 @@ module Makr
       deleteTargets()
     end
 
-    
+
     # kind of debugging-"to_s"-function
     def printDependencies(prefix = "")
       Makr.log.info(prefix + @name + " deps size: " + @dependencies.size.to_s)
@@ -565,7 +565,7 @@ module Makr
 
       @defaultTask = nil
       @nrOfThreads = nil
-      
+
       @accessMutex = Mutex.new # for synchronized accesses
     end
 
@@ -777,7 +777,7 @@ module Makr
       saveHash = Hash.new
       @taskHash.each do |key, value|
         if value.config and not (saveHash.has_key?(value.config.name)) then # save each config once
-          saveHash[value.config.name] = @configs[value.config.name]
+          saveHash[value.config.name] = value.config
           @configs.delete(value.config.name)
         end
       end
@@ -957,8 +957,7 @@ module Makr
 
         if @task.dependencyHadUpdateError() then
           @task.deleteTargets()
-          @task.setErrorState() # set update error on this task too, as a dependency had an error (error propagation)
-        
+          @task.setErrorState() # set update error on this task too, as a dependency had an error (ERROR PROPAGATION)
         else
 
           # do we need to update?
@@ -1054,7 +1053,7 @@ module Makr
 
 
 
-  
+
 
   # --
   # [ RDoc stops processing comments if it finds a comment line containing '#--'
@@ -1849,7 +1848,7 @@ module Makr
   #++
 
 
-  
+
 
   # Helps collecting files given directories and patterns. All methods are static.
   # I did not use find from ruby standard library, as I needed more flexibility (patterns,
@@ -2061,14 +2060,14 @@ module Makr
   end
 
 
-  
+
 
   #--
   #
   # some internal helper functions follow
   #
   #++
-  
+
 
 
   # some global variable setup
