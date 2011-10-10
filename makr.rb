@@ -334,8 +334,8 @@ module Makr
   class Task
 
     # dependencies are of course tasks this task depends on. Additionally we have the array of
-    # dependantTask that depend on this task (double-linked graph structure)
-    attr_reader :name, :dependencies, :dependantTasks
+    # dependentTask that depend on this task (double-linked graph structure)
+    attr_reader :name, :dependencies, :dependentTasks
     # targets is an Array of file names containing the targets produced by the task (may be empty if no files are produced)
     # this can be used to resolve dependencies on generated files
     attr_reader :targets
@@ -361,7 +361,7 @@ module Makr
     def initialize(name, config = nil)
       @name = name
       @dependencies = Array.new
-      @dependantTasks = Array.new
+      @dependentTasks = Array.new
       @targets = Array.new
 
       @config = config
@@ -377,7 +377,7 @@ module Makr
     def addDependency(otherTask)
       if not @dependencies.index(otherTask) then
         @dependencies.push(otherTask)
-        otherTask.dependantTasks.push(self)
+        otherTask.dependentTasks.push(self)
       else
         # throw an exception ?
         Makr.log.warn("addDependency: Task with name #{otherTask.name} already exists as a dependency of task #{@name}.")
@@ -393,7 +393,7 @@ module Makr
 
     def removeDependency(otherTask)
       if @dependencies.index(otherTask) != nil then
-        otherTask.dependantTasks.delete(self)
+        otherTask.dependentTasks.delete(self)
         @dependencies.delete(otherTask)
       else
         raise "[makr] Trying to remove a non-existant dependency!" # here we definitely raise an exception
@@ -410,8 +410,8 @@ module Makr
 
 
     def clearDependantTasks()
-      while not @dependantTasks.empty?
-        @dependantTasks.first.removeDependency(self)  # this deletes @dependantTasks.first implicitely (see above)
+      while not @dependentTasks.empty?
+        @dependentTasks.first.removeDependency(self)  # this deletes @dependentTasks.first implicitely (see above)
       end
     end
 
@@ -579,7 +579,7 @@ module Makr
 
 
     # central function for building a given task. If task is not given, the defaultTask is used
-    # or if even that one is not set, a root tasks with no dependant tasks is searched and
+    # or if even that one is not set, a root tasks with no dependent tasks is searched and
     # constructed. If even that fails, an exception is thrown.
     # The variable nrOfThreads influences, how many threads perform the update. If
     # no number is given, the number of available processors is used (see ThreadPool).
@@ -590,12 +590,12 @@ module Makr
       if task then
         effectiveTask = task
       else
-        # check default task or search for a single task without dependant tasks (but give warning)
+        # check default task or search for a single task without dependent tasks (but give warning)
         if @defaultTask.kind_of? Task then
           effectiveTask = @defaultTask
         else
           Makr.log.warn("no (default) task given for build, searching for root task")
-          tasksFound = @taskHash.values.select {|v| v.dependantTasks.empty?}
+          tasksFound = @taskHash.values.select {|v| v.dependentTasks.empty?}
           if tasksFound.size >= 1 then
             if tasksFound.size > 1 then
               Makr.log.warn("more than one root task found, taking the first found, which is: " + tasksFound.first.name)
@@ -766,7 +766,7 @@ module Makr
       while not deleteArr.empty? do
         task = deleteArr.delete_at(0)
         @taskHashCache.delete(task.name)
-        deleteArr.concat(task.dependantTasks) # pickup dependantTasks, which need to be deleted, too
+        deleteArr.concat(task.dependentTasks) # pickup dependentTasks, which need to be deleted, too
         task.cleanupBeforeDeletion() # do last cleanups
         task.clearAll()  # untie all connections
       end
@@ -936,7 +936,7 @@ module Makr
       # just to increase the dependenciesUpdatedCount in each marked node so that in case
       # of the update of a single (sub-)dependency, the node will surely be updated or an update error is handled!
       # An intermediate node up to the root might not be updated, as it need not, but the algorithm logic
-      # still needs to handle dependant tasks for the above reason.
+      # still needs to handle dependent tasks for the above reason.
       def run()
         @task.mutex.synchronize do
           raise "[makr] Unexpectedly starting on a task that needs no update!" if not @task.updateMark # some sanity check
@@ -975,13 +975,13 @@ module Makr
 
         end
 
-        @task.dependantTasks.each do |dependantTask|
-          dependantTask.mutex.synchronize do
-            if dependantTask.updateMark then # only work on dependant tasks that want to be updated
-              # if we are the last thread to reach the dependant task, we will run the next thread on it
-              dependantTask.dependenciesUpdatedCount = dependantTask.dependenciesUpdatedCount + 1
-              if (dependantTask.dependenciesUpdatedCount == dependantTask.dependencies.size) then
-                updater = Updater.new(dependantTask, @build, @threadPool, @stopOnFirstError)
+        @task.dependentTasks.each do |dependentTask|
+          dependentTask.mutex.synchronize do
+            if dependentTask.updateMark then # only work on dependent tasks that want to be updated
+              # if we are the last thread to reach the dependent task, we will run the next thread on it
+              dependentTask.dependenciesUpdatedCount = dependentTask.dependenciesUpdatedCount + 1
+              if (dependentTask.dependenciesUpdatedCount == dependentTask.dependencies.size) then
+                updater = Updater.new(dependentTask, @build, @threadPool, @stopOnFirstError)
                 @threadPool.execute {updater.run()}
               end
             end
@@ -1082,12 +1082,12 @@ module Makr
 
 
     def update()
-      # produce a nice message in error case (we want exactly one dependant task)
-      raise "[makr] ConfigTask #{name} does not have a dependant task, but needs one!" if (not (dependantTasks.size == 1))
+      # produce a nice message in error case (we want exactly one dependent task)
+      raise "[makr] ConfigTask #{name} does not have a dependent task, but needs one!" if (not (dependentTasks.size == 1))
 
-      # just update state with config string from the only dependantTask
+      # just update state with config string from the only dependentTask
       # getConfigString() is supposed to NOT deliver a nil object, but at least an empty String
-      @state = dependantTasks.first.getConfigString()
+      @state = dependentTasks.first.getConfigString()
     end
 
   end
