@@ -1,0 +1,9 @@
+TODO:
+*****
+
+  -> merge classes with similar functionality: CompileTask, Static/DynamicLibTask, ProgramTask
+  -> make more convenience classes for standard configurations
+  -> split examples more or make a single big example Makrfile.rb (or both)
+  -> check out, if named pipes could help speed up the compile and dependencies detection process
+     in CompileTask (in conjunction with -MF option of gcc)
+
