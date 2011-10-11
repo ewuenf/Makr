@@ -2032,11 +2032,20 @@ module Makr
 
 
 
-
+  @@madeDirs = Array.new
 
   # loads a Makrfile.rb from the given dir and executes it using Kernel.load and push/pops the current ScriptArguments
   def Makr.makeDir(dir, additionalArguments = getArgs().arguments.clone)
-    return if UpdateTraverser.abortBuild # check if build was aborted before proceeding
+
+    # check if build was aborted before proceeding
+    return if UpdateTraverser.abortBuild 
+
+    # check, if we already made this subdir (this helps avoiding multiple build calls on dependent subdirs)
+    checkDir = Dir.pwd + "/" + dir
+    return if @@madeDirs.include? checkDir
+    @@madeDirs.push(checkDir)
+
+    # then do subdir
     dir = Makr.cleanPathName(dir)
     oldDir = Dir.pwd
     Dir.chdir(dir)
@@ -2121,7 +2130,7 @@ Makr.log.formatter = proc { |severity, datetime, progname, msg|
     "[makr #{severity} #{datetime}] [#{Makr::UpdateTraverser.timeToBuildDownRemaining}]    #{msg}\n"
 }
 # just give short version notice on every startup
-Makr.log << "\n\nmakr version 1.3\n\n"
+Makr.log << "\n\nmakr version 1.4\n\n"
 # then set the signal handler to allow cooperative aborting of the build process on SIGUSR1 or SIGTERM
 Makr.setSignalHandler()
 # set global vars
@@ -2131,6 +2140,4 @@ Makr.setMakrGlobalVars()
 Makr.pushArgs(Makr::ScriptArguments.new("./Makrfile.rb", ARGV))
 # then we reuse the makeDir functionality building the current directory
 Makr.makeDir(".")
-
-
 
