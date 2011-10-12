@@ -77,31 +77,16 @@ module Makr
       @mocFileName = makeMocFileName()
 
       # first we need a dep on the input file
-      if not @build.hasTask?(@fileName) then
-        @inputFileDep = FileTask.new(@fileName)
-        @build.addTask(@fileName, @inputFileDep)
-      else
-        @inputFileDep = @build.getTask(@fileName)
-      end
+      @inputFileDep = @build.getOrMakeNewTask(@fileName) {FileTask.new(@fileName)}
       addDependency(@inputFileDep)
+      
       # now add a dep on the moc output file
-      if not @build.hasTask?(@mocFileName) then
-        @mocTargetDep = FileTask.new(@mocFileName, false)
-        @build.addTask(@mocFileName, @mocTargetDep)
-      else
-        @mocTargetDep = @build.getTask(@mocFileName)
-      end
+      @mocTargetDep = @build.getOrMakeNewTask(@mocFileName) {FileTask.new(@mocFileName, false)}
       addDependency(@mocTargetDep)
       @targets = [@mocFileName]
 
       # now add another dep on the config
-      @configTaskName = ConfigTask.makeName(@name)
-      if not @build.hasTask?(@configTaskName) then
-        @configDep = ConfigTask.new(@configTaskName)
-        @build.addTask(@configTaskName, @configDep)
-      else
-        @configDep = @build.getTask(@configTaskName)
-      end
+      @configDep = @build.getOrMakeNewTask(ConfigTask.makeName(@name)) {ConfigTask.new(ConfigTask.makeName(@name))}
       addDependency(@configDep)
 
       Makr.log.debug("made MocTask with @name=\"" + @name + "\"")
@@ -181,10 +166,7 @@ module Makr
         compileTask.config = @compileTaskConfig
       end
       tasks.push(compileTask)
-      # now fill fileHash
-      @build.fileHash[fileName] ||= Array.new
-      @build.fileHash[fileName].concat(tasks)
-      @build.fileHash[fileName].uniq!
+      @build.pushTaskToFileHash(fileName, tasks)
       return tasks
     end
 
@@ -255,35 +237,18 @@ module Makr
       @build = build
 
       @uicFileName = @fileName + ".h"  # use simple header file extension as it is included in other files
-      @targets = [@uicFileName]
 
       # first we need a dep on the input file
-      if not @build.hasTask?(@fileName) then
-        @inputFileDep = FileTask.new(@fileName)
-        @build.addTask(@fileName, @inputFileDep)
-      else
-        @inputFileDep = @build.getTask(@fileName)
-      end
+      @inputFileDep = @build.getOrMakeNewTask(@fileName) {FileTask.new(@fileName)}
       addDependency(@inputFileDep)
 
-      # now add a dep on the output file
-      if not @build.hasTask?(@uicFileName) then
-        @uicTargetDep = FileTask.new(@uicFileName, false)
-        @build.addTask(@uicFileName, @uicTargetDep)
-      else
-        @uicTargetDep = @build.getTask(@uicFileName)
-      end
+      # now add a dep on the uic output file
+      @uicTargetDep = @build.getOrMakeNewTask(@uicFileName) {FileTask.new(@uicFileName, false)}
       addDependency(@uicTargetDep)
       @targets = [@uicFileName]
 
       # now add another dep on the config
-      @configTaskName = ConfigTask.makeName(@name)
-      if not @build.hasTask?(@configTaskName) then
-        @configDep = ConfigTask.new(@configTaskName)
-        @build.addTask(@configTaskName, @configDep)
-      else
-        @configDep = @build.getTask(@configTaskName)
-      end
+      @configDep = @build.getOrMakeNewTask(ConfigTask.makeName(@name)) {ConfigTask.new(ConfigTask.makeName(@name))}
       addDependency(@configDep)
 
       Makr.log.debug("made UicTask with @name=\"" + @name + "\"")
@@ -355,10 +320,7 @@ module Makr
         uicTask.config = @uicTaskConfig
       end
       tasks = [uicTask]
-      # now fill fileHash
-      @build.fileHash[fileName] ||= Array.new
-      @build.fileHash[fileName].concat(tasks)
-      @build.fileHash[fileName].uniq!
+      @build.pushTaskToFileHash(fileName, tasks)
       return tasks
     end
 

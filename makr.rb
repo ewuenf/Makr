@@ -570,6 +570,14 @@ module Makr
     end
 
 
+    # tasks is expected to be an Array of Task
+    def pushTaskToFileHash(fileName, tasks)
+      fileHash[fileName] ||= Array.new
+      fileHash[fileName].concat(tasks)
+      fileHash[fileName].uniq!
+    end
+    
+
     # block concept to ensure automatic save after block is done (should embrace all actions in a Makrfile.rb)
     def saveAfterBlock(cleanupConfigs = true)
       yield
@@ -610,25 +618,21 @@ module Makr
       # call preUpdate on all tasks before starting UpdateTraverser
       # we need to take care, that the taskHash might get modified during iteration, so Hash.values
       # returns a *new* array with all tasks at call time, on which we can safely iterate
-      Makr.log.info( " \n\n ############################# doing preUpdate() \n\n\n" )
+      Makr.log.info( " \n\n ############################# doing preUpdate()  ###########################\n\n\n" )
       @taskHash.values.each {|task| task.preUpdate() }
 
-      Makr.log.info( " \n\n ############################# doing update() \n\n\n" )
+      Makr.log.info( " \n\n ############################# doing update()     ###########################\n\n\n" )
       updateTraverser.traverse(self, effectiveTask)
       @buildError = (effectiveTask.state == nil)
 
-      Makr.log.info( " \n\n ############################# doing postUpdate() \n\n\n" )
+      Makr.log.info( " \n\n ############################# doing postUpdate() ###########################\n\n\n" )
       doPostUpdates() if not @buildError
 
       # finally give message:
       if not UpdateTraverser.abortBuild and not @buildError then
-        Makr.log.info("\n")
-        Makr.log.info("\n")
-        Makr.log.info("############ ;-) successfully build task ############")
+        Makr.log.info("\n\n ############################# ;-) successfully build task ##################\n\n\n" )
       else
-        Makr.log.info("\n")
-        Makr.log.info("\n")
-        Makr.log.info("~~~~~~~~~~~~ :(  ERROR on building task  ~~~~~~~~~~~~")
+        Makr.log.info("\n\n oooooo    oooooo    ooooo     :(  ERROR on building task  oooooo   oo oo ooo\n\n\n" )
       end
     end
 
@@ -703,6 +707,19 @@ module Makr
         return task if (task.targets and task.targets.include?(fileName))
       end
       nil
+    end
+
+
+    # This function wants a block, use it like this:
+    #    build.getOrMakeNewTask(name) {MyTask.new(arg1,arg2, ...)}
+    # The function first searches for task with the given name and returns it, if found. If not, it creates a
+    # new Task by executing the user-provided block and returns that one.
+    def getOrMakeNewTask(name)
+      if not hasTask?(name) then
+        task = yield
+        addTask(name, task)
+      end
+      return getTask(name)
     end
 
 
@@ -834,8 +851,13 @@ module Makr
       end
     end
 
+
+    
   end  # end of class Build
 
+
+
+  
 
 
   # Constructs a build from the caches found in the ".makr"-subDir in the given buildPath, if they
@@ -1193,7 +1215,7 @@ module Makr
   # The input files are dependencies on FileTasks including the source itself. Another dependency exists on the
   # target object file, so that the task rebuilds, if that file was deleted or modified otherwise. Also the
   # task has a dependency on the Config object that contains the compiler options etc. so that a change in these
-  # also triggers recompilation (see also ConfigTask). The variable CompileTask.checkOnlyUserHeaders controls, wether
+  # also triggers recompilation (see also ConfigTask). The variable CompileTask.excludeSystemHeaders controls, wether
   # dependency checking is extended to system header files or not (the former is more costly, default is not to do
   # this).
   class CompileTask < Task
@@ -1227,12 +1249,12 @@ module Makr
 
 
     # this variable influences dependency checking by the compiler ("-M" or "-MM" option)
-    @@checkOnlyUserHeaders = true
-    def CompileTask.checkOnlyUserHeaders
-      @@checkOnlyUserHeaders
+    @@excludeSystemHeaders = true
+    def CompileTask.excludeSystemHeaders
+      @@excludeSystemHeaders
     end
-    def CompileTask.checkOnlyUserHeaders=(arg)
-      @@checkOnlyUserHeaders = arg
+    def CompileTask.excludeSystemHeaders=(arg)
+      @@excludeSystemHeaders = arg
     end
 
 
@@ -1252,7 +1274,7 @@ module Makr
 
     # the path of the input and output file of the compilation
     attr_reader :fileName, :objectFileName
-    attr_accessor :checkOnlyUserHeaders
+    attr_accessor :excludeSystemHeaders
 
 
     # arguments: fileName contains the file to be compiled, build references the Build object containing the tasks
@@ -1278,39 +1300,37 @@ module Makr
       @fileIsGenerated = fileIsGenerated
       @generatorTaskDep = generatorTask
       if not @fileIsGenerated then
-        if not @build.hasTask?(@fileName) then
-          @compileFileDep = FileTask.new(@fileName)
-          @build.addTask(@fileName, @compileFileDep)
-        else
-          @compileFileDep = @build.getTask(@fileName)
-        end
+        @compileFileDep = @build.getOrMakeNewTask(@fileName) {FileTask.new(@fileName)}
       end
 
       # construct a dependency task on the target object file
       @objectFileName = makeObjectFileName(fileName)
-      if not @build.hasTask?(@objectFileName) then
-        @compileTargetDep = FileTask.new(@objectFileName, false)
-        @build.addTask(@objectFileName, @compileTargetDep)
-      else
-        @compileTargetDep = @build.getTask(@objectFileName)
-      end
+      @compileTargetDep = @build.getOrMakeNewTask(@objectFileName) {FileTask.new(@objectFileName, false)}
       @targets = [@objectFileName] # set targets produced by this task
       deleteTargets() # delete targets upon construction to guarantee a first update
 
       # construct a dependency task on the configuration
-      @configTaskDepName = ConfigTask.makeName(@name)
-      if not @build.hasTask?(@configTaskDepName) then
-        @configTaskDep = ConfigTask.new(@configTaskDepName)
-        @build.addTask(@configTaskDepName, @configTaskDep)
-      else
-        @configTaskDep = @build.getTask(@configTaskDepName)
-      end
+      @configTaskDep = @build.getOrMakeNewTask(ConfigTask.makeName(@name)) {ConfigTask.new(ConfigTask.makeName(@name))}
 
+      # then add the dependencies constructed above
       buildDependencies()
 
       Makr.log.debug("made CompileTask with @name=\"" + @name + "\"") # debug feedback
     end
 
+
+    # method is used in getDepsStringArrayFromCompiler() below
+    def makeDependencyCheckingCommand()
+      # do we also want system header deps?
+      # the local variable overrides class variable if set
+      excludeSystemHeaders = (@excludeSystemHeaders)? @excludeSystemHeaders : @@excludeSystemHeaders
+      # system headers are excluded using compiler option "-MM", else "-M"
+      # -MG is for ignoring missing header files, that may be generated
+      # we hardcode this options right now, as this build tool is limited to compilers adhering to gcc's interface
+      # (if we have a compiler that does not, then we may also need to exchange the dependency parsing)
+      depCommand = makeCompilerCallString() + @fileName + ((excludeSystemHeaders)?" -MM ":" -M ") + " -MG "
+    end
+    
 
     # calls compiler with complete configuration options to automatically generate a list of dependency files
     # the list is parsed in buildDependencies()
@@ -1327,13 +1347,8 @@ module Makr
         return false
       end
 
-      # now we check, if we also want system header deps
-      # the local variable overrides class variable if set
-      checkOnlyUserHeaders = (@checkOnlyUserHeaders)? @checkOnlyUserHeaders : @@checkOnlyUserHeaders
-      # system headers are excluded using compiler option "-MM", else "-M"
-      # -MG is for ignoring missing header files, that may be generated (use this ?)
-      depCommand = makeCompilerCallString() + ((checkOnlyUserHeaders)?" -MM ":" -M ") + " -MG " + @fileName
-
+      # construct dependency checking command and execute it
+      depCommand = makeDependencyCheckingCommand()
       Makr.log.info("Executing compiler to check for dependencies in CompileTask: \"" + @name + "\"\n\t" + depCommand)
       compilerPipe = IO.popen(depCommand)  # in ruby >= 1.9.2 we could use Open3.capture2(...) for this purpose
       @dependencyLines = compilerPipe.readlines
@@ -1400,6 +1415,11 @@ module Makr
     end
 
 
+    def makeCompileCommand() # construction now uses gcc flag notation
+      return makeCompilerCallString() + " -c " + @fileName + " -o " + @objectFileName
+    end
+    
+
     def update()
       @state = nil # first set state to unsuccessful build
 
@@ -1409,7 +1429,7 @@ module Makr
       return if not getDepsStringArrayFromCompiler()
 
       # construct compiler command and execute it
-      compileCommand = makeCompilerCallString() + " -c " + @fileName + " -o " + @objectFileName
+      compileCommand = makeCompileCommand()
       Makr.log.info("CompileTask #{@name}: Executing compiler\n\t" + compileCommand)
       successful = system(compileCommand)
       Makr.log.error("Error in CompileTask #{@name}") if not successful
@@ -1514,23 +1534,12 @@ module Makr
       @build = build
 
       # we need a dep on the lib target
-      if not @build.hasTask?(@libFileName) then
-        @libTargetDep = FileTask.new(@libFileName, false)
-        @build.addTask(@libFileName, @libTargetDep)
-      else
-        @libTargetDep = @build.getTask(@libFileName)
-      end
+      @libTargetDep = @build.getOrMakeNewTask(@libFileName) {FileTask.new(@libFileName, false)}
       addDependency(@libTargetDep)
       @targets = [@libFileName]
 
       # now add another dependency task on the config
-      @configDepName = ConfigTask.makeName(@libFileName)
-      if not @build.hasTask?(@configDepName) then
-        @configDep = ConfigTask.new(@configDepName)
-        @build.addTask(@configDepName, @configDep)
-      else
-        @configDep = @build.getTask(@configDepName)
-      end
+      @configDep = @build.getOrMakeNewTask(ConfigTask.makeName(@name)) {ConfigTask.new(ConfigTask.makeName(@name))}
       addDependency(@configDep)
 
       Makr.log.debug("made DynamicLibTask with @name=\"" + @name + "\"")
@@ -1642,23 +1651,12 @@ module Makr
       @build = build
 
       # first we need a dependency on the target
-      if not @build.hasTask?(@libFileName) then
-        @libTargetDep = FileTask.new(@libFileName, false)
-        @build.addTask(@libFileName, @libTargetDep)
-      else
-        @libTargetDep = @build.getTask(@libFileName)
-      end
+      @libTargetDep = @build.getOrMakeNewTask(@libFileName) {FileTask.new(@libFileName, false)}
       addDependency(@libTargetDep)
       @targets = [@libFileName]
 
       # now add another dependency task on the config
-      @configDepName = ConfigTask.makeName(@libFileName)
-      if not @build.hasTask?(@configDepName) then
-        @configDep = ConfigTask.new(@configDepName)
-        @build.addTask(@configDepName, @configDep)
-      else
-        @configDep = @build.getTask(@configDepName)
-      end
+      @configDep = @build.getOrMakeNewTask(ConfigTask.makeName(@name)) {ConfigTask.new(ConfigTask.makeName(@name))}
       addDependency(@configDep)
 
       Makr.log.debug("made StaticLibTask with @name=\"" + @name + "\"")
@@ -1766,23 +1764,12 @@ module Makr
       @build = build
 
       # first we make dependency on the target program file
-      if not @build.hasTask?(@programName) then
-        @targetDep = FileTask.new(@programName, false)
-        @build.addTask(@programName, @targetDep)
-      else
-        @targetDep = @build.getTask(@programName)
-      end
+      @targetDep = @build.getOrMakeNewTask(@programName) {FileTask.new(@programName, false)}
       addDependency(@targetDep)
       @targets = [@programName]
 
       # now add another dependency task on the config
-      @configDepName = ConfigTask.makeName(@programName)
-      if not @build.hasTask?(@configDepName) then
-        @configDep = ConfigTask.new(@configDepName)
-        @build.addTask(@configDepName, @configDep)
-      else
-        @configDep = @build.getTask(@configDepName)
-      end
+      @configDep = @build.getOrMakeNewTask(ConfigTask.makeName(@name)) {ConfigTask.new(ConfigTask.makeName(@name))}
       addDependency(@configDep)
 
       Makr.log.debug("made ProgramTask with @name=\"" + @name + "\"")
@@ -1943,11 +1930,9 @@ module Makr
                        " compared to cached version, setting to new value: " + @config.name)
         localTask.config = @config
       end
-      # now fill fileHash
-      @build.fileHash[fileName] = Array.new if not @build.fileHash[fileName]
-      @build.fileHash[fileName].push(localTask)
-      @build.fileHash[fileName].uniq!
-      return [localTask]
+      dummyTaskArray = [localTask]
+      @build.pushTaskToFileHash(fileName, dummyTaskArray)
+      return dummyTaskArray
     end
   end
 
