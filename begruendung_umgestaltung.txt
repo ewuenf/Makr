@@ -1,0 +1,8 @@
+dependency parsing hängt auch vom gcc output format ab
+Wenn ich alles in die config-Klassen verlagere, dann macht ist das Vererbungskonzept für die Configs zunächst konträr
+bestimmte compiler-Aufrufe sind sehr auf die Anordnung der Argumente festgelegt (z.B. StaticLibTask und DynamicLibTask)
+es wäre nicht gut, das Target einer Linkerstufe sowohl dem Linker-Task als auch der Config zu übergeben, hier
+  lauern Inkonsistenzen
+Toolchains und Bauvarianten können so unterschiedlich sein, da macht es wenig Sinn zu verallgemeinern, wahrscheinlich
+  ist es nicht einmal sinnvoll, auf die Sequenz Compile->Link zu setzen. Das einzige, was verallgemeinerbar erscheint,
+  sind ConfigTask und FileTask, weshalb diese im zentralen Skript zu finden sind.
