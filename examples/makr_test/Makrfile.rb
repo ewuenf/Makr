@@ -2,10 +2,18 @@
 # it is just provided as (a not very good) example of doing a build. The user could for example
 # use functions and classes to organize it all.
 
-# first load needed extensions
+
+# At first, we need to load a tool chain (which is implemented as an extension). The exact
+# usage may differ for another tool chain, the following Makrfile.rb uses gcc command line
+# arguments. For every extension there should be enough documentation or examples to guide
+# the user through.
+Makr.loadExtension("ToolChainLinuxGcc")
+
+# then we load some further extensions
 Makr.loadExtension("Qt")
 Makr.loadExtension("pkg-config")
-# this is an extension, that is intrusive into main Makr classes (like Build, FileTask,...), use only when really helpful
+# The following is an extension, which is intrusive into main Makr classes 
+# (like Build, FileTask,...), so use only when really helpful
 Makr.loadExtension("SourceStats")
 
 

@@ -455,7 +455,6 @@ module Makr
     def makeLinkerCallString() # "ar rcs" is default value
       if @config then
         Makr.log.debug("StaticLibTask " + @name + ": config name is: \"" + @config.name + "\"")
-        @config = @build.getConfig(@@configName)
         callString = String.new
         if (not @config["linker"]) then
           Makr.log.warn("no linker command given, using default ar")

@@ -2,6 +2,12 @@
 # it is just provided as (a not very good) example of doing a build. The user could for example
 # use functions and classes to organize it all.
 
+# At first, we need to load a tool chain (which is implemented as an extension). The exact
+# usage may differ for another tool chain, the following Makrfile.rb uses gcc command line
+# arguments. For every extension there should be enough documentation or examples to guide
+# the user through.
+Makr.loadExtension("ToolChainLinuxGcc")
+
 
 # decompose arguments
 $arguments = Makr.getArgs()
