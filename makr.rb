@@ -1451,13 +1451,24 @@ module Makr
 
 
 
-
-
-  
-
-  # very very simple extension system (plugin system)
+  # very very simple extension system (plugin system), safeguarded against multiple extension loading
+  @@loadedExtensions = Array.new
+  # loads the given extension from the extensions subdirectory of a makr-installation
   def Makr.loadExtension(exName)
-    Kernel.load($makrExtensionsDir + "/" + exName + ".rb") # regarding $makrExtensionsDir, see setMakrGlobalVars()
+    unless @@loadedExtensions.include?(exName) then
+      Kernel.load($makrExtensionsDir + "/" + exName + ".rb") # regarding $makrExtensionsDir, see setMakrGlobalVars()
+      @@loadedExtensions.push(exName)
+    end
+  end
+
+  # some helper functions for extension scripts (and maybe user scripts) to check for dependencies
+  def Makr.isAnyOfTheseExtensionsLoaded?(exList)
+    exList.each { |exName | return true if @@loadedExtensions.include?(exName) }
+    return false
+  end
+  # read-only access (making a depp copy)
+  def Makr.loadedExtensions()
+    @@loadedExtensions.map {|m| m.clone}
   end
 
 
@@ -1465,7 +1476,6 @@ module Makr
 
 
 
-  
 end     # end of module makr ######################################################################################
 
 
