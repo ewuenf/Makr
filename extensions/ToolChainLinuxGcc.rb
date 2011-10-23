@@ -583,7 +583,9 @@ module Makr
       end
     end
 
-    alias :getConfigString :makeLinkerCallString
+    def getConfigString()
+      makeLinkerCallString() + @extraStaticLibs.join(' ')
+    end
 
 
     # The options accepted in the config could be "linker", "linker.lFlags",
@@ -602,7 +604,7 @@ module Makr
       @configDep = @build.getOrMakeNewTask(ConfigTask.makeName(@name)) {ConfigTask.new(ConfigTask.makeName(@name))}
       addDependency(@configDep)
 
-      @extraStaticLibs = Array.new
+      @extraStaticLibs = Array.new # for static libs specified by user
 
       Makr.log.debug("made ProgramTask with @name=\"" + @name + "\"")
     end
@@ -616,16 +618,31 @@ module Makr
     end
 
 
+    def makeInputFilesString()
+      retString = String.new
+      # first we want them object files
+      @dependencies.each do |dep|
+        retString += " " + dep.targets[0] if dep.kind_of?(CompileTask)
+      end
+      # then the dynamic libs
+      @dependencies.each do |dep|
+        retString += " " + dep.targets[0] if dep.kind_of?(DynamicLibTask)
+      end
+      # and at the end the static libs to avoid linker issues (maybe add them twice, also at the front?)
+      @dependencies.each do |dep|
+        retString += " " + dep.targets[0] if dep.kind_of?(StaticLibTask)
+      end
+      return (retString += " " + @extraStaticLibs.join(' '))
+    end
+    
+
     def update()
       @state = nil # first set state to unsuccessful build
 
       # build compiler command and execute it
       linkCommand = makeLinkerCallString() + " -o " + @programName
-      # first add object file dependencies
-      @dependencies.each do |dep|
-        linkCommand += " " + dep.objectFileName if dep.kind_of?(CompileTask)
-      end
-      # then add static lib dependencies
+      linkCommand += makeInputFilesString()
+      # present command
       Makr.log.info("Building ProgramTask \"" + @name + "\"\n\t" + linkCommand)
       successful = system(linkCommand)
       Makr.log.error("Error in ProgramTask #{@name}") if not successful
