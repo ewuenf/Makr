@@ -285,7 +285,7 @@ module Makr
 
 
 
-  
+
 
 
 
@@ -602,7 +602,17 @@ module Makr
       @configDep = @build.getOrMakeNewTask(ConfigTask.makeName(@name)) {ConfigTask.new(ConfigTask.makeName(@name))}
       addDependency(@configDep)
 
+      @extraStaticLibs = Array.new
+
       Makr.log.debug("made ProgramTask with @name=\"" + @name + "\"")
+    end
+
+
+    # Add the file name of a static lib to be linked in, that cannot be automatically deduced ( which is normally done
+    # by checking all direct dependencies if they are a StaticLibTask).
+    def addStaticLibFile(fileName)
+      Makr.cleanPathName(fileName)
+      @extraStaticLibs.push(fileName) if not @extraStaticLibs.include?(fileName)
     end
 
 
@@ -611,10 +621,11 @@ module Makr
 
       # build compiler command and execute it
       linkCommand = makeLinkerCallString() + " -o " + @programName
+      # first add object file dependencies
       @dependencies.each do |dep|
-        # we only want dependencies that provide an object file
-        linkCommand += " " + dep.objectFileName if (dep.respond_to?(:objectFileName) and dep.objectFileName)
+        linkCommand += " " + dep.objectFileName if dep.kind_of?(CompileTask)
       end
+      # then add static lib dependencies
       Makr.log.info("Building ProgramTask \"" + @name + "\"\n\t" + linkCommand)
       successful = system(linkCommand)
       Makr.log.error("Error in ProgramTask #{@name}") if not successful
@@ -648,7 +659,7 @@ module Makr
 
 
 
-  
+
 end     # end of module makr ######################################################################################
 
 
