@@ -551,8 +551,14 @@ module Makr
   # define an objectFileName-member.
   class ProgramTask < Task
 
-    attr_reader    :programName  # identifies the binary to be build, wants full path as usual
-
+    # identifies the binary to be build, wants full path as usual
+    attr_reader    :programName  
+    # Array of String, specifying the path + file name to additional static libs,
+    # these are linked last in the order of this Array, any strange static lib
+    # dependencies (like necessary multiple inclusion) may be solved using this
+    # variable.
+    attr_accessor  :extraStaticLibs
+    
 
     # make a unique name for ProgramTasks out of the programName which is to be compiled
     # expects a Pathname or a String
@@ -611,7 +617,8 @@ module Makr
 
 
     # Add the file name of a static lib to be linked in, that cannot be automatically deduced ( which is normally done
-    # by checking all direct dependencies if they are a StaticLibTask).
+    # by checking all direct dependencies if they are a StaticLibTask). The member extraStaticLibs, that is modified
+    # here can also be accessed directly (its an array of file names)
     def addStaticLibFile(fileName)
       Makr.cleanPathName(fileName)
       @extraStaticLibs.push(fileName) if not @extraStaticLibs.include?(fileName)

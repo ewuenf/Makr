@@ -1,1 +1,5 @@
 Short and simple ruby script providing a lightweight build-system for c/c++-development.
+
+Important note: If you experience errors during a build due to changes in the Makrfile.rb,
+                try to delete the build-directory and rebuild from scratch. The cache could
+                be corrupted and is rebuild when the build-directory is deleted.

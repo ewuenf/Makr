@@ -52,6 +52,15 @@ def buildAll()
     # and then build it
     build.build(myStaticLibTask)
 
+    #########################################
+    #
+    # a note: if you construct several StaticLibs to be linked, their order is relevant (escpecially if they depend on each 
+    # other), you may need to specify the libs again using the extraStaticLibs-member of ProgramTask
+    #
+    ########################################
+
+
+
     # we can use a generator directly (if we know that we need only one), by calling its generate-function with a file name
     # a generator always returns an array, so we name it mainCompileTasks although the array in this case contains only one
     # member
