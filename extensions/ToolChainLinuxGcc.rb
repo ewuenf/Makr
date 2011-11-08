@@ -20,21 +20,15 @@ module Makr
     def makeCompilerCallString() # g++ is the general default value
       if @config then
         Makr.log.debug("CompileTask " + @name + ": config name is: \"" + @config.name + "\"")
-        callString = String.new
-        if (not @config["compiler"]) then
-          Makr.log.warn("CompileTask " + @name + ": no compiler given, using default g++")
-          callString = "g++ "
-        else
-          callString = @config["compiler"] + " "
-        end
+        callString = (@config["compiler"])?(@config["compiler"] + " "):"g++ " # g++ as default value
         # now add additionyl flags and options
-        callString += @config["compiler.cFlags"]       + " " if @config["compiler.cFlags"]
-        callString += @config["compiler.defines"]      + " " if @config["compiler.defines"]
-        callString += @config["compiler.includePaths"] + " " if @config["compiler.includePaths"]
-        callString += @config["compiler.otherOptions"] + " " if @config["compiler.otherOptions"]
+        callString += " " + @config["compiler.cFlags"]       + " " if @config["compiler.cFlags"]
+        callString += " " + @config["compiler.defines"]      + " " if @config["compiler.defines"]
+        callString += " " + @config["compiler.includePaths"] + " " if @config["compiler.includePaths"]
+        callString += " " + @config["compiler.otherOptions"] + " " if @config["compiler.otherOptions"]
         return callString
       else
-        Makr.log.warn("CompileTask " + @name + ": no config given, using bare g++")
+        Makr.log.debug("CompileTask " + @name + ": no config given, using bare g++")
         return "g++ "
       end
     end
@@ -148,7 +142,7 @@ module Makr
       @dependencyLines = compilerPipe.readlines
       compilerPipe.close
       if $?.exitstatus != 0 then # $? is thread-local, so this should be safe in multi-threaded update
-        Makr.log.fatal( "error #{$?.exitstatus} in CompileTask for file \"" + @fileName +
+        Makr.log.fatal( "Compiler error with exit status #{$?.exitstatus} in CompileTask for file \"" + @fileName +
                         "\" making dependencies failed, check file for syntax errors!")
         return false # error case
       end
@@ -327,24 +321,18 @@ module Makr
     def makeLinkerCallString() # g++ is always default value
       if @config then
         Makr.log.debug("DynamicLibTask " + @name + ": config name is: \"" + @config.name + "\"")
-        callString = String.new
-        if (not @config["linker"]) then
-          Makr.log.warn("no linker command given, using default g++")
-          callString = "g++ "
-        else
-          callString = @config["linker"] + " "
-        end
+        callString = (@config["linker"])?(@config["linker"] + " "):"g++ "
         # now add other flags and options
-        callString += @config["linker.lFlags"]       + " " if @config["linker.lFlags"]
-        callString += @config["linker.libPaths"]     + " " if @config["linker.libPaths"]
-        callString += @config["linker.libs"]         + " " if @config["linker.libs"]
-        callString += @config["linker.otherOptions"] + " " if @config["linker.otherOptions"]
+        callString += " " + @config["linker.lFlags"]       + " " if @config["linker.lFlags"]
+        callString += " " + @config["linker.libPaths"]     + " " if @config["linker.libPaths"]
+        callString += " " + @config["linker.libs"]         + " " if @config["linker.libs"]
+        callString += " " + @config["linker.otherOptions"] + " " if @config["linker.otherOptions"]
         # add mandatory "-shared" etc if necessary
         callString += " -shared " if not callString.include?("-shared")
         callString += (" -Wl,-soname," + @libName) if not callString.include?("-soname")
         return callString
       else
-        Makr.log.warn("no config given, using bare linker g++")
+        Makr.log.debug("no config given, using bare linker g++")
         return "g++ -shared -Wl,-soname," + @libName
       end
     end
@@ -452,19 +440,12 @@ module Makr
     end
 
 
-    def makeLinkerCallString() # "ar rcs" is default value
+    def makeLinkerCallString() # "ar rcs " is default value
       if @config then
         Makr.log.debug("StaticLibTask " + @name + ": config name is: \"" + @config.name + "\"")
-        callString = String.new
-        if (not @config["linker"]) then
-          Makr.log.warn("no linker command given, using default ar")
-          callString = "ar rcs "
-        else
-          callString = @config["linker"] + " "
-        end
-        return callString
+        return ((@config["linker"])?(@config["linker"] + " "):("ar rcs "))
       else
-        Makr.log.warn("no @config given, using bare linker ar")
+        Makr.log.debug("no @config given, using bare linker ar")
         return "ar rcs "
       end
     end
@@ -570,21 +551,15 @@ module Makr
     def makeLinkerCallString() # g++ is always default value
       if @config then
         Makr.log.debug("ProgramTask " + @name + ": config name is: \"" + @config.name + "\"")
-        callString = String.new
-        if (not @config["linker"]) then
-          Makr.log.warn("no linker command given, using default g++")
-          callString = "g++ "
-        else
-          callString = @config["linker"] + " "
-        end
+        callString = (@config["linker"])?(@config["linker"] + " "):"g++ "
         # now add other flags and options
-        callString += @config["linker.lFlags"]       + " " if @config["linker.lFlags"]
-        callString += @config["linker.libPaths"]     + " " if @config["linker.libPaths"]
-        callString += @config["linker.libs"]         + " " if @config["linker.libs"]
-        callString += @config["linker.otherOptions"] + " " if @config["linker.otherOptions"]
+        callString += " " + @config["linker.lFlags"]       + " " if @config["linker.lFlags"]
+        callString += " " + @config["linker.libPaths"]     + " " if @config["linker.libPaths"]
+        callString += " " + @config["linker.libs"]         + " " if @config["linker.libs"]
+        callString += " " + @config["linker.otherOptions"] + " " if @config["linker.otherOptions"]
         return callString
       else
-        Makr.log.warn("no config given, using bare linker g++")
+        Makr.log.debug("no config given, using bare linker g++")
         return "g++ "
       end
     end
