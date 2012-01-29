@@ -3,9 +3,10 @@
 module Qt_Extension_Check
   exList = ["ToolChainLinuxGcc"]
   if not Makr.isAnyOfTheseExtensionsLoaded?(exList) then
-    Makr.log.error("Error on loading extension \"Qt\", needing one of the following extensions:\n" +
-                    + "\"" + exList.join("\", \"") + "\""
+    Makr.log.error( "Error on loading extension \"Qt\", needing one of the following extensions:\n" +
+                    "\"" + exList.join("\", \"") + "\"\n\n\n"
                   )
+    raise #we stop execution here
   end
 end
 
