@@ -1,5 +1,7 @@
 
 
+# This extension provides classes enabling the compilation of source files, construction of binaries, dynamic and static 
+# libraries with the standard GNU tool chain part of many important linux distributions
 module Makr
 
 
@@ -246,9 +248,6 @@ module Makr
   # Generator classes used in conjunction with Makr.applyGenerators(fileCollection, generatorArray). See examples.
   # The generate(fileName)-functions in each class return an Array of tasks, that contains all generated tasks or
   # is empty in case of failure.
-
-
-
   # Produces a CompileTask for every fileName given, if it does not exist. All CompileTask objects get the config given.
   class CompileTaskGenerator
 
@@ -280,10 +279,18 @@ module Makr
 
 
 
-
-
-
-
+  # Linking tasks follow.
+  #
+  #
+  # A general note from 'man ld';
+  #
+  # Note---if the linker is being invoked indirectly, via a compiler driver (e.g. gcc) then all the linker command line
+  # options should be prefixed by -Wl, (or whatever is appropriate for the particular compiler driver) like this:
+  #
+  #                  gcc -Wl,--start-group foo.o bar.o -Wl,--end-group
+  #
+  # This is important, because otherwise the compiler driver program may silently drop the linker options, resulting
+  # in a bad link.
 
 
   # This class constructs a dynamic library.
@@ -318,26 +325,45 @@ module Makr
     end
 
 
-    def makeLinkerCallString() # g++ is always default value
+    # we subdivide linker and options here as we want the options at the end of the command
+    # to avoid problems with static libs specified as options
+    
+    def makeLinkerString()
+      if @config then
+        return (@config["linker"])?(@config["linker"] + " "):"g++ " # g++ is default value
+      else
+        return "g++ "
+      end
+    end
+
+    
+    def makeOptionsString()
+      if @config then
+        # flags and options
+        optionsString  = " " + @config["linker.lFlags"]       + " " if @config["linker.lFlags"]
+        optionsString += " " + @config["linker.libPaths"]     + " " if @config["linker.libPaths"]
+        optionsString += " " + @config["linker.libs"]         + " " if @config["linker.libs"]
+        optionsString += " " + @config["linker.otherOptions"] + " " if @config["linker.otherOptions"]
+        # add mandatory "-shared" etc if necessary
+        optionsString += " -shared " if not optionsString.include?("-shared")
+        optionsString += (" -Wl,-soname," + @libName) if not optionsString.include?("-soname")
+        return optionsString
+      else
+        return " -shared -Wl,-soname," + @libName
+      end
+      
+    end
+
+
+    def getConfigString()
       if @config then
         Makr.log.debug("DynamicLibTask " + @name + ": config name is: \"" + @config.name + "\"")
-        callString = (@config["linker"])?(@config["linker"] + " "):"g++ "
-        # now add other flags and options
-        callString += " " + @config["linker.lFlags"]       + " " if @config["linker.lFlags"]
-        callString += " " + @config["linker.libPaths"]     + " " if @config["linker.libPaths"]
-        callString += " " + @config["linker.libs"]         + " " if @config["linker.libs"]
-        callString += " " + @config["linker.otherOptions"] + " " if @config["linker.otherOptions"]
-        # add mandatory "-shared" etc if necessary
-        callString += " -shared " if not callString.include?("-shared")
-        callString += (" -Wl,-soname," + @libName) if not callString.include?("-soname")
-        return callString
+        return makeLinkerString() + makeOptionsString()
       else
         Makr.log.debug("no config given, using bare linker g++")
         return "g++ -shared -Wl,-soname," + @libName
       end
     end
-
-    alias :getConfigString :makeLinkerCallString
 
 
     # libFileName should be the complete path (absolute or relative) of the library with all standard fuss, like
@@ -371,11 +397,12 @@ module Makr
       # we always check for properly setup dependencies
       checkDependencyTasksForPIC()
       # build compiler command and execute it
-      linkCommand = makeLinkerCallString() + " -o " + @libFileName
+      linkCommand = makeLinkerString()
       @dependencies.each do |dep|
         # we only want dependencies that provide an object file
         linkCommand += " " + dep.objectFileName if (dep.respond_to?(:objectFileName) and dep.objectFileName)
       end
+      linkCommand += makeOptionsString() + " -o " + @libFileName
       Makr.log.info("Building DynamicLibTask #{@name}\n\t" + linkCommand)
       successful = system(linkCommand)
       Makr.log.error("Error in DynamicLibTask #{@name}") if not successful
@@ -548,24 +575,42 @@ module Makr
     end
 
 
-    def makeLinkerCallString() # g++ is always default value
+    # we subdivide linker and options here as we want the options at the end of the command
+    # to avoid problems with static libs specified as options
+
+    def makeLinkerString()
       if @config then
-        Makr.log.debug("ProgramTask " + @name + ": config name is: \"" + @config.name + "\"")
-        callString = (@config["linker"])?(@config["linker"] + " "):"g++ "
-        # now add other flags and options
-        callString += " " + @config["linker.lFlags"]       + " " if @config["linker.lFlags"]
-        callString += " " + @config["linker.libPaths"]     + " " if @config["linker.libPaths"]
-        callString += " " + @config["linker.libs"]         + " " if @config["linker.libs"]
-        callString += " " + @config["linker.otherOptions"] + " " if @config["linker.otherOptions"]
-        return callString
+        return (@config["linker"])?(@config["linker"] + " "):"g++ " # g++ is default value
       else
-        Makr.log.debug("no config given, using bare linker g++")
         return "g++ "
       end
     end
 
-    def getConfigString()
-      makeLinkerCallString() + @extraStaticLibs.join(' ')
+
+    def makeOptionsString()
+      if @config then
+        # flags and options
+        optionsString  = " " + @config["linker.lFlags"]       + " " if @config["linker.lFlags"]
+        optionsString += " " + @config["linker.libPaths"]     + " " if @config["linker.libPaths"]
+        optionsString += " " + @config["linker.libs"]         + " " if @config["linker.libs"]
+        optionsString += " " + @config["linker.otherOptions"] + " " if @config["linker.otherOptions"]
+        return optionsString
+      else
+        return String.new # no options, empty string
+      end
+
+    end
+
+
+    def getConfigString()      
+      if @config then
+        Makr.log.debug("ProgramTask " + @name + ": config name is: \"" + @config.name + "\"")
+        configString =  makeLinkerString() + makeOptionsString()
+      else
+        Makr.log.debug("no config given, using bare linker g++")
+        configString =  "g++ "
+      end
+      configString + @extraStaticLibs.join(' ')
     end
 
 
@@ -591,7 +636,7 @@ module Makr
     end
 
 
-    # Add the file name of a static lib to be linked in, that cannot be automatically deduced ( which is normally done
+    # Add the file name of a static lib to be linked in, that cannot be automatically deduced (which is normally done
     # by checking all direct dependencies if they are a StaticLibTask). The member extraStaticLibs, that is modified
     # here can also be accessed directly (its an array of file names)
     def addStaticLibFile(fileName)
@@ -622,8 +667,7 @@ module Makr
       @state = nil # first set state to unsuccessful build
 
       # build compiler command and execute it
-      linkCommand = makeLinkerCallString() + " -o " + @programName
-      linkCommand += makeInputFilesString()
+      linkCommand = makeLinkerString() + " -o " + @programName + makeInputFilesString() + makeOptionsString()
       # present command
       Makr.log.info("Building ProgramTask \"" + @name + "\"\n\t" + linkCommand)
       successful = system(linkCommand)
