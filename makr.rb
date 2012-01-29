@@ -276,7 +276,8 @@ module Makr
       #    * we have do not have the key
       #      * we have no parent and return nil
       #      * we have a parent and recursively check for the key
-      @hash[key] or (@parent ? @parent[key] : nil)
+      # if everything fails, we want to return a new String at least
+      @hash[key] or (@parent ? @parent[key] : nil) or String.new
     end
 
 

@@ -38,8 +38,10 @@ def buildAll()
     # create some Config instances for use during build (they may already exist), this example uses a qt3 setup
     compilerConfig = build.makeNewConfig("CompileTask")
     compilerConfig.clear()
-    compilerConfig["compiler"] = "g++"
-    compilerConfig["compiler.includePaths"] = " -I" + $localDir + "/src" + " -I/usr/lib/qt3/include"
+    compilerConfig["compiler"] = "g++" # this is purely optional, as the default value is "g++ "
+    # setting values of the configuration hash can be done with " = " or " += ", regardless of wether they have been
+    # set before, its just a matter of overwriting or adding configuration strings
+    compilerConfig["compiler.includePaths"] += " -I" + $localDir + "/src" + " -I/usr/lib/qt3/include"
     compilerConfig["linker"] = "g++"
     compilerConfig["linker.libs"] = " -lX11"
     # use pkg-config to simplify config tasks
