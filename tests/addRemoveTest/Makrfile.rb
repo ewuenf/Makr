@@ -1,3 +1,6 @@
+# load needed extensions
+Makr::loadExtension("ToolChainLinuxGcc")
+
 # decompose arguments
 $arguments = Makr.getArgs()
 $localDir = File.dirname($arguments.scriptFile)
