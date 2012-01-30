@@ -279,6 +279,15 @@ module Makr
 
 
 
+
+
+
+
+
+
+  
+
+
   # Linking tasks follow.
   #
   #
@@ -399,8 +408,8 @@ module Makr
       # build compiler command and execute it
       linkCommand = makeLinkerString()
       @dependencies.each do |dep|
-        # we only want dependencies that provide an object file
-        linkCommand += " " + dep.objectFileName if (dep.respond_to?(:objectFileName) and dep.objectFileName)
+        # we only want CompileTask dependencies from which we use the objectFileName
+        linkCommand += " " + dep.objectFileName if dep.kind_of?(CompileTask)
       end
       linkCommand += makeOptionsString() + " -o " + @libFileName
       Makr.log.info("Building DynamicLibTask #{@name}\n\t" + linkCommand)
@@ -452,10 +461,9 @@ module Makr
 
 
   # This class constructs a static library. No special flags are needed as compared to DynamicLibTask regarding
-  # the CompileTasks.
+  # the CompileTasks (see http://www.faqs.org/docs/Linux-HOWTO/Program-Library-HOWTO.html).
+  # The standard construction is: "ar rcs my_library.a file1.o file2.o ..."
   class StaticLibTask < Task
-    # special static lib thingies (see http://www.faqs.org/docs/Linux-HOWTO/Program-Library-HOWTO.html)
-    # standard construction is: "ar rcs my_library.a file1.o file2.o ..."
 
     attr_reader    :libName  # basename of the lib to be build
     attr_reader    :libFileName  # path of the lib to be build (does not need to be absolute)
@@ -507,8 +515,8 @@ module Makr
       # build compiler command and execute it
       linkCommand = makeLinkerCallString() + @libFileName
       @dependencies.each do |dep|
-        # we only want dependencies that provide an object file
-        linkCommand += " " + dep.objectFileName if (dep.respond_to?(:objectFileName) and dep.objectFileName)
+        # we only want CompileTask dependencies from which we use the objectFileName
+        linkCommand += " " + dep.objectFileName if dep.kind_of?(CompileTask)
       end
       Makr.log.info("Building StaticLibTask \"#{name}\"\n\t" + linkCommand)
       successful = system(linkCommand)
@@ -556,7 +564,9 @@ module Makr
 
 
   # This class represents a task that builds a program binary made up from all dependencies that
-  # define an objectFileName-member.
+  # define an objectFileName-member. If static libraries are linked in via StaticLibTask, a group
+  # statement will be used (see "man ld") to alleviate cyclic dependencies. As this imposes a little
+  # performance overhead the user may of course choose to not enable this. See member useStaticLibsGroup
   class ProgramTask < Task
 
     # identifies the binary to be build, wants full path as usual
@@ -565,7 +575,7 @@ module Makr
     # these are linked last in the order of this Array, any strange static lib
     # dependencies (like necessary multiple inclusion) may be solved using this
     # variable.
-    attr_accessor  :extraStaticLibs
+    attr_accessor  :extraStaticLibs, :useStaticLibsGroup
     
 
     # make a unique name for ProgramTasks out of the programName which is to be compiled
@@ -631,6 +641,7 @@ module Makr
       addDependency(@configDep)
 
       @extraStaticLibs = Array.new # for static libs specified by user
+      @useStaticLibsGroup = true
 
       Makr.log.debug("made ProgramTask with @name=\"" + @name + "\"")
     end
@@ -649,16 +660,18 @@ module Makr
       retString = String.new
       # first we want them object files
       @dependencies.each do |dep|
-        retString += " " + dep.targets[0] if dep.kind_of?(CompileTask)
+        retString += " " + dep.objectFileName if dep.kind_of?(CompileTask)
       end
       # then the dynamic libs
       @dependencies.each do |dep|
-        retString += " " + dep.targets[0] if dep.kind_of?(DynamicLibTask)
+        retString += " " + dep.libFileName if dep.kind_of?(DynamicLibTask)
       end
       # and at the end the static libs to avoid linker issues (maybe add them twice, also at the front?)
+      retString += " -Wl,--start-group" if @useStaticLibsGroup
       @dependencies.each do |dep|
-        retString += " " + dep.targets[0] if dep.kind_of?(StaticLibTask)
+        retString += " " + dep.libFileName if dep.kind_of?(StaticLibTask)
       end
+      retString += " -Wl,--end-group" if @useStaticLibsGroup
       return (retString += " " + @extraStaticLibs.join(' '))
     end
     
