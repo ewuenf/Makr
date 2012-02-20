@@ -16,6 +16,8 @@ Makr.loadExtension("pkg-config")
 # (like Build, FileTask,...), so use only when really helpful
 Makr.loadExtension("SourceStats")
 
+Makr.loadExtension("ConfigH")
+
 
 # then decompose arguments
 $arguments = Makr.getArgs()
@@ -29,6 +31,10 @@ puts "target in makr_test: #{$target}"
 
 def buildAll()
 
+  configH = Makr::ConfigH.new($localDir + "/src/config.h")
+  configH.addDefine("TEST_DEF", "just a test")
+  configH.generateFile()
+  
   # first load build caches etc.
   build = Makr.loadBuild($buildDir)
 
@@ -84,7 +90,7 @@ end
 
 # implement a simple clean target
 if($target == "clean")
-  system("rm -f " + $buildDir + "/*")
+  system("rm -rf #{$buildDir} #{$localDir + "/src/config.h"}")
 else
   buildAll()
 end
