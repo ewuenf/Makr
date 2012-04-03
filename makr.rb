@@ -20,7 +20,7 @@
 #               the multithreaded update is much more simplified.
 
 
-require 'ftools'
+require 'fileutils'
 require 'find'
 require 'thread'
 require 'md5'
