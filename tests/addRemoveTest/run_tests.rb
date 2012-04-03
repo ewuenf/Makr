@@ -1,6 +1,6 @@
 #!/usr/bin/ruby
 
-require 'ftools'
+require 'fileutils'
 
 $sourceLinesHeader =
   [
