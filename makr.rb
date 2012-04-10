@@ -1475,6 +1475,24 @@ module Makr
 
 
 
+  
+  
+  
+  
+  
+  
+  
+  # utility function to reduce a build's load on the system (using renice and ionice (Linux only))
+  def Makr.doNiceBuild()
+    system("renice -n 19 -p #{Process.pid};ionice -c 3 -p #{Process.pid}")
+  end
+  
+  
+  
+  
+  
+  
+  
 
 
 end     # end of module makr ######################################################################################
