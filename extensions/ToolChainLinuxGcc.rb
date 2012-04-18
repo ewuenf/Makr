@@ -122,6 +122,8 @@ module Makr
       depCommand = makeCompilerCallString() + @fileName + ((excludeSystemHeaders)?" -MM ":" -M ") + " -MG -MF\"" + @objectFileName + ".d\""
     end
 
+    # from eclipse managed build:
+    # g++ CFLAGS -c -fmessage-length=0 -MMD -MP -MF"src/cpp_test.d" -MT"src/cpp_test.d" -o "src/cpp_test.o" "../src/cpp_test.cpp"
 
     # calls compiler with complete configuration options to automatically generate a list of dependency files
     # the list is parsed in buildDependencies()
@@ -137,6 +139,8 @@ module Makr
         Makr.log.error("generated file is missing: #{@fileName}")
         return false
       end
+
+      return true
 
       # construct dependency checking command and execute it
       depCommand = makeDependencyCheckingCommand()
@@ -207,7 +211,8 @@ module Makr
 
 
     def makeCompileCommand() # construction now uses gcc flag notation
-      return makeCompilerCallString() + " -c " + @fileName + " -o " + @objectFileName
+      excludeSystemHeaders = (@excludeSystemHeaders)? @excludeSystemHeaders : @@excludeSystemHeaders
+      return makeCompilerCallString() + " -c \"" + @fileName + "\" -o \"" + @objectFileName + "\"" + ((excludeSystemHeaders)?" -MMD ":" -MD ") + " -MF\"" + @objectFileName + ".d\""
     end
 
 
