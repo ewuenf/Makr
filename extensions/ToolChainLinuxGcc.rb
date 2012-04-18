@@ -166,11 +166,7 @@ module Makr
       addDependency(@configTaskDep)
       addDependency(@generatorTaskDep) if @fileIsGenerated
 
-      # compiler generated deps
-      if File.exist?(@objectFileName + ".d") then
-        @dependencyLines = File.open(@objectFileName + ".d").readlines
-      end
-      return if not @dependencyLines # only go on if we havem
+      return if not @dependencyLines # only go on if we have compiler generated deps
       dependencyFiles = Array.new
       @dependencyLines.each do |depLine|
         depLine.strip! # remove white space and newlines
@@ -231,6 +227,10 @@ module Makr
       Makr.log.error("Error in CompileTask #{@name}") if not successful
       @compileTargetDep.update() # update file information on the compiled target in any case
 
+      # compiler generated deps
+      if File.exist?(@objectFileName + ".d") then
+        @dependencyLines = File.open(@objectFileName + ".d").readlines
+      end
       # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
       @state = concatStateOfDependencies() if successful
     end
