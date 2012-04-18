@@ -103,6 +103,7 @@ module Makr
       @configTaskDep = @build.getOrMakeNewTask(ConfigTask.makeName(@name)) {ConfigTask.new(ConfigTask.makeName(@name))}
 
       # then add the dependencies constructed above
+      File.delete(@objectFileName + ".d") rescue nil # first delete an existing dep file
       buildDependencies()
 
       Makr.log.debug("made CompileTask with @name=\"" + @name + "\"") # debug feedback
@@ -118,7 +119,7 @@ module Makr
       # -MG is for ignoring missing header files, that may be generated
       # we hardcode this options right now, as this build tool is limited to compilers adhering to gcc's interface
       # (if we have a compiler that does not, then we may also need to exchange the dependency parsing)
-      depCommand = makeCompilerCallString() + @fileName + ((excludeSystemHeaders)?" -MM ":" -M ") + " -MG "
+      depCommand = makeCompilerCallString() + @fileName + ((excludeSystemHeaders)?" -MM ":" -M ") + " -MG -MF\"" + @objectFileName + ".d\""
     end
 
 
@@ -140,12 +141,9 @@ module Makr
       # construct dependency checking command and execute it
       depCommand = makeDependencyCheckingCommand()
       Makr.log.info("Executing compiler to check for dependencies in CompileTask: \"" + @name + "\"\n\t" + depCommand)
-      compilerPipe = IO.popen(depCommand)  # in ruby >= 1.9.2 we could use Open3.capture2(...) for this purpose
-      @dependencyLines = compilerPipe.readlines
-      compilerPipe.close
-      if $?.exitstatus != 0 then # $? is thread-local, so this should be safe in multi-threaded update
-        Makr.log.fatal( "Compiler error with exit status #{$?.exitstatus} in CompileTask for file \"" + @fileName +
-                        "\" making dependencies failed, check file for syntax errors!")
+      successful = system(depCommand)
+      if not successful then
+        Makr.log.fatal( "CompileTask for file \"" + @fileName + "\" making dependencies failed, check file for syntax errors!")
         return false # error case
       end
       return true # success case
@@ -165,6 +163,9 @@ module Makr
       addDependency(@generatorTaskDep) if @fileIsGenerated
 
       # compiler generated deps
+      if File.exist?(@objectFileName + ".d") then
+        @dependencyLines = File.open(@objectFileName + ".d").readlines
+      end
       return if not @dependencyLines # only go on if we havem
       dependencyFiles = Array.new
       @dependencyLines.each do |depLine|
