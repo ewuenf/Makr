@@ -22,8 +22,8 @@ module Makr
     def makeCompilerCallString() # g++ is the general default value
       if @config then
         Makr.log.debug("CompileTask " + @name + ": config name is: \"" + @config.name + "\"")
-        callString = (@config["compiler"])?(@config["compiler"] + " "):"g++ " # g++ as default value
-        # now add additionyl flags and options
+        callString = (@config["compiler"].empty?)?"g++ ":(@config["compiler"] + " ") # g++ as default value
+        # now add other flags and options
         callString += " " + @config["compiler.cFlags"]       + " " if @config["compiler.cFlags"]
         callString += " " + @config["compiler.defines"]      + " " if @config["compiler.defines"]
         callString += " " + @config["compiler.includePaths"] + " " if @config["compiler.includePaths"]
@@ -314,16 +314,16 @@ module Makr
 
     # we subdivide linker and options here as we want the options at the end of the command
     # to avoid problems with static libs specified as options
-    
+
     def makeLinkerString()
       if @config then
-        return (@config["linker"])?(@config["linker"] + " "):"g++ " # g++ is default value
+        return (@config["linker"].empty?)?"g++ ":(@config["linker"] + " ") # g++ is default value
       else
         return "g++ "
       end
     end
 
-    
+
     def makeOptionsString()
       if @config then
         # flags and options
@@ -338,7 +338,6 @@ module Makr
       else
         return " -shared -Wl,-soname," + @libName
       end
-      
     end
 
 
@@ -456,7 +455,7 @@ module Makr
     def makeLinkerCallString() # "ar rcs " is default value
       if @config then
         Makr.log.debug("StaticLibTask " + @name + ": config name is: \"" + @config.name + "\"")
-        return ((@config["linker"])?(@config["linker"] + " "):("ar rcs "))
+        return (@config["linker"].empty?)?"ar rcs ":(@config["linker"] + " ")
       else
         Makr.log.debug("no @config given, using bare linker ar")
         return "ar rcs "
@@ -554,7 +553,7 @@ module Makr
     # dependencies (like necessary multiple inclusion) may be solved using this
     # variable.
     attr_accessor  :extraStaticLibs, :useStaticLibsGroup
-    
+
 
     # make a unique name for ProgramTasks out of the programName which is to be compiled
     # expects a Pathname or a String
@@ -568,7 +567,7 @@ module Makr
 
     def makeLinkerString()
       if @config then
-        return (@config["linker"])?(@config["linker"] + " "):"g++ " # g++ is default value
+        return (@config["linker"].empty?)?"g++ ":(@config["linker"] + " ") # g++ is default value
       else
         return "g++ "
       end
@@ -652,7 +651,7 @@ module Makr
       retString += " -Wl,--end-group" if @useStaticLibsGroup
       return (retString += " " + @extraStaticLibs.join(' '))
     end
-    
+
 
     def update()
       @state = nil # first set state to unsuccessful build
