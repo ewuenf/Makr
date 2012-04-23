@@ -4,3 +4,4 @@
 Makr.makeDir("makr_test")
 Makr.makeDir("DynamicLib")
 Makr.makeDir("StaticLib")
+Makr.makeDir("BinaryWithStaticLib")
