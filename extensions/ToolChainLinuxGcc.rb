@@ -242,12 +242,7 @@ module Makr
         @build.addTask(compileTaskName, CompileTask.new(fileName, @build, @config))
       end
       localTask = @build.getTask(compileTaskName)
-      # care for changed configName when config is from cache
-      if localTask.config != @config then
-        Makr.log.debug( "config has changed in task " + localTask.name + \
-                       " compared to cached version, setting to new value: " + @config.name)
-        localTask.config = @config
-      end
+      localTask.config = @config
       dummyTaskArray = [localTask]
       @build.pushTaskToFileHash(fileName, dummyTaskArray)
       return dummyTaskArray
@@ -413,6 +408,7 @@ module Makr
       build.addTask(libTaskName, DynamicLibTask.new(libFileName, build, libConfig))
     end
     libTask = build.getTask(libTaskName)
+    libTask.config = libConfig
     libTask.addDependencies(taskCollection)
     build.defaultTask = libTask # set this as default task in build
     return libTask
@@ -518,6 +514,7 @@ module Makr
       build.addTask(libTaskName, StaticLibTask.new(libFileName, build, libConfig))
     end
     libTask = build.getTask(libTaskName)
+    libTask.config = libConfig
     libTask.addDependencies(taskCollection)
     build.defaultTask = libTask # set this as default task in build
     return libTask
@@ -589,7 +586,7 @@ module Makr
     end
 
 
-    def getConfigString()      
+    def getConfigString()
       if @config then
         Makr.log.debug("ProgramTask " + @name + ": config name is: \"" + @config.name + "\"")
         configString =  makeLinkerString() + makeOptionsString()
@@ -681,6 +678,7 @@ module Makr
       build.addTask(programTaskName, ProgramTask.new(progName, build, programConfig))
     end
     progTask = build.getTask(programTaskName)
+    progTask.config = programConfig
     progTask.addDependencies(taskCollection)
     build.defaultTask = progTask # set this as default task in build
     return progTask
