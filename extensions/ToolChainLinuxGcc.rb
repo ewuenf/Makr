@@ -194,8 +194,24 @@ module Makr
       # construct compiler command and execute it
       compileCommand = makeCompileCommand()
       Makr.log.info("CompileTask #{@name}: Executing compiler\n\t" + compileCommand)
-      successful = system(compileCommand)
-      Makr.log.error("Error in CompileTask #{@name}") if not successful
+
+      # we use a pipe here to protect the user from interleaved output, just gathering
+      # compiler output ourselves and then print out synchronously. Therefore, we
+      # redirect cerr with [+ " 2>&1"], as gcc will output errors there and the pipe only reads cout
+      compilerPipe = IO.popen(compileCommand + " 2>&1")
+      compilerOutput = compilerPipe.read
+      compilerPipe.close
+      successful = ($?.exitstatus == 0) # exit status is different from zero upon compile error
+
+      if not successful then  # check if we had a compiler error
+        Makr.log.error("Error in CompileTask #{@name}:\n\n" + compilerOutput)
+      elsif not compilerOutput.empty? then # no compiler error, but compiler output (typically warnings)
+        Makr.log.warn("Warnings in CompileTask #{@name}:\n\n" + compilerOutput)
+      else
+        # we only do debug output here, for not to clutter the build output
+        Makr.log.debug("Successfully completed CompileTask #{@name}")
+      end
+
       @compileTargetDep.update() # update file information on the compiled target in any case
 
       # compiler generated deps, we read them back in here already, as we want to have em in OS cache,
