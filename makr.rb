@@ -824,13 +824,38 @@ module Makr
     def prepareDump()
       @taskHashCache.replace(@taskHash)
       @taskHash.clear()
+      unsetMutexes()
     end
 
 
     def unprepareDump()
       @taskHash.replace(@taskHashCache)
       @taskHashCache.clear()
+      setMutexes()
     end
+
+
+    def setMutexes()
+      @taskHash.each_value do |value|
+        value.mutex = Mutex.new
+      end
+      @taskHashCache.each_value do |value|
+        value.mutex = Mutex.new
+      end
+      @accessMutex = Mutex.new
+    end
+      
+
+    def unsetMutexes()
+      @taskHash.each_value do |value|
+        value.mutex = nil
+      end
+      @taskHashCache.each_value do |value|
+        value.mutex = nil
+      end
+      @accessMutex = nil
+    end
+
 
 
   protected
@@ -885,6 +910,7 @@ module Makr
     File.open(buildPathBuildDumpFileName, "rb") do |dumpFile|
       build = Marshal.load(dumpFile)
       build.cleanTaskHashCache()
+      build.setMutexes()
       return build
     end
   end
