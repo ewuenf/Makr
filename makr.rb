@@ -23,7 +23,7 @@
 require 'fileutils'
 require 'find'
 require 'thread'
-require 'md5'
+require 'digest/md5'
 require 'logger'
 require 'stringio'
 
