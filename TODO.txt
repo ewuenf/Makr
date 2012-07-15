@@ -6,4 +6,7 @@ TODO:
   -> split examples more or make a single big example Makrfile.rb (or both)
   -> check out, if named pipes could help speed up the compile and dependencies detection process
      in CompileTask (in conjunction with -MF option of gcc)
+  -> make a really simple standard project
+  -> include gold and clang with new extensions
+  -> change default linker to ld in gcc toolchain, not using the compiler (is this a difference?)
 
