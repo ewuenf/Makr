@@ -1,12 +1,10 @@
 TODO:
 *****
 
-  -> merge classes with similar functionality: CompileTask, Static/DynamicLibTask, ProgramTask
+  -> merge classes with similar functionality: CompileTask, Static/DynamicLibTask, ProgramTask ?
   -> make more convenience classes for standard configurations
   -> split examples more or make a single big example Makrfile.rb (or both)
-  -> check out, if named pipes could help speed up the compile and dependencies detection process
-     in CompileTask (in conjunction with -MF option of gcc)
-  -> make a really simple standard project
-  -> include gold and clang with new extensions
-  -> change default linker to ld in gcc toolchain, not using the compiler (is this a difference?)
+  -> make a really simple standard project class, kind of declarative
+  -> include gold and clang (with new extensions)
+  -> consider using yajl-ruby over Marshal.dump for increased speed and readability of cache file
 
