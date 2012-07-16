@@ -1009,9 +1009,12 @@ module Makr
             @task.update()
             @task.updateDuration = (Time.now - t1)
             # check for update error
-            UpdateTraverser.abortBuild = true if @stopOnFirstError and not @task.state
+            if @task.state then # no error
+              @build.registerPostUpdate(@task)
+            else
+              UpdateTraverser.abortBuild = true if @stopOnFirstError
+            end
           end
-          @build.registerPostUpdate(@task) if @task.state
 
         end
 
