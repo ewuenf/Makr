@@ -8,7 +8,7 @@
 # of examples are/willbe provided.
 #
 #
-# Some remarks: In general, we want relative paths, so that development dirs can be moved without whoes. 
+# Some remarks: In general, we want relative paths, so that development dirs can be moved without whoes.
 #               The user may still prefer absolute paths (and use them), but the script tries to make no assumptions.
 #               We also make no assumptions on the command lines arguments given, the user is free to parse
 #               his own parameter set (using OptionParser from the stdlib for example).
@@ -172,7 +172,7 @@ module Makr
 
 
 
-  # logging 
+  # logging
   def Makr.log()
     @log ||= Logger.new(STDOUT)
   end
@@ -198,7 +198,7 @@ module Makr
     if pathName.index("/") != 0 then # have a relative path
       hasRelativePathBegin = pathName.index("./") # is nil if not found, index otherwise!
       if (not hasRelativePathBegin) or (hasRelativePathBegin > 0) then
-        pathName = "./" + pathName 
+        pathName = "./" + pathName
       end
     end
     return pathName
@@ -466,7 +466,7 @@ module Makr
       return retString
     end
 
-    
+
     # used in UpdateTraverser::Updater
     def dependencyHadUpdateError()
       return false if @dependencies.empty? # no error, if we have no deps!
@@ -475,13 +475,13 @@ module Makr
       end
       return false # no dependency had nil state, so everything is fine
     end
-    
-    
+
+
     def setErrorState()
       @state = nil
     end
 
-    
+
     # Every subclass should provide an "update()" function, that performs an action that updates the Task
     # (like compilation etc.). The task graph itself should be unchanged during update as we do a multithreaded
     # update. Use function postUpdate() for this purpose.
@@ -565,7 +565,7 @@ module Makr
     # build path identifies the build directory where the cache of configs and tasks is stored in a
     # subdirectory ".makr" and loaded upon construction, if the cache exists (which is fundamental to the
     # main build functionality "rebuild only tasks, that need it").
-    def initialize(buildPath) 
+    def initialize(buildPath)
       @buildPath = Makr.cleanPathName(buildPath)
       @buildPath.freeze # make sure this isnt changed during execution
 
@@ -594,7 +594,7 @@ module Makr
       fileHash[fileName].concat(tasks)
       fileHash[fileName].uniq!
     end
-    
+
 
     # block concept to ensure automatic save after block is done (should embrace all actions in a Makrfile.rb)
     def saveAfterBlock(cleanupConfigs = true)
@@ -870,12 +870,12 @@ module Makr
     end
 
 
-    
+
   end  # end of class Build
 
 
 
-  
+
 
 
   # Constructs a build from the caches found in the ".makr"-subDir in the given buildPath, if they
@@ -895,7 +895,7 @@ module Makr
 
     if not File.file?(buildPathBuildDumpFileName) then
       Makr.log.warn("could not find or open build dump file, build will be setup new!")
-      return Build.new(buildPath) 
+      return Build.new(buildPath)
     end
     Makr.log.info("found build dump file, now restoring")
     File.open(buildPathBuildDumpFileName, "rb") do |dumpFile|
@@ -906,7 +906,7 @@ module Makr
   end
 
 
-  # Saves the Build to the ".makr"-subdir of the buildPath. 
+  # Saves the Build to the ".makr"-subdir of the buildPath.
   def Makr.saveBuild(build, cleanupConfigs = true)
     # we exclude the fileHash from the saved data (as it is just convenience and we want to avoid a synchronization mess)
     localFileHash = build.fileHash
@@ -919,7 +919,7 @@ module Makr
     end
 
     # as the user may use the build after save, we restore everything
-    build.unprepareDump() 
+    build.unprepareDump()
     build.fileHash = localFileHash
   end
 
@@ -965,6 +965,8 @@ module Makr
 
 
     # this class variable is used to realize cooperative build abort, see Makr::abortBuild()
+    # this thing is normally set, if  a user sends a signal to the executing build script,
+    # so its a hard and kind of global condition (see Makr.setSignalHandler())
     @@abortBuild = false
     def UpdateTraverser.abortBuild
       @@abortBuild
@@ -995,15 +997,19 @@ module Makr
     # nested class representing a single task update, executed in a thread pool
     class Updater
 
-      def initialize(task, build, threadPool, stopOnFirstError)
+      # we carry around various references to other objects
+      def initialize(task, build, threadPool, stopOnFirstError, noMoreUpdates)
         @task = task
         @build = build
         @threadPool = threadPool
-        @stopOnFirstError = stopOnFirstError
+        @stopOnFirstError = stopOnFirstError # tells us, that we stop, if an error occurs
+        @noMoreUpdates = noMoreUpdates # indicates, that an error occured and @stopOnFirstError is true,
+                                       # so we do not make updates any longer, but just delete targets
+                                       # and set error state (see below)
       end
 
 
-      # we need to go up the tree with the traversal even in case dependency did not update or had an error upon update
+      # we need to go up the tree with the traversal even in case a dependency did not update or had an error upon update
       # just to increase the dependenciesUpdatedCount in each marked node so that in case
       # of the update of a single (sub-)dependency, the node will surely be updated or an update error is handled!
       # An intermediate node up to the root might not be updated, as it need not, but the algorithm logic
@@ -1012,27 +1018,30 @@ module Makr
         @task.mutex.synchronize do
           raise "[makr] Unexpectedly starting on a task that needs no update!" if not @task.updateMark # some sanity check
           @task.updateMark = false
-          daDoRunRunRun() # see immediately below
         end
-      end
+        daDoRunRunRun() # see immediately below
 
-
-      def daDoRunRunRun()
-        # as we will have done a task (wether it was updated or not doesnt matter), we want to decrease the timeToBuildDownRemaining
+        # as we have done a task (wether it was updated or not doesnt matter), we want to decrease the timeToBuildDownRemaining
         # we scale by the nrOfThreads employed (ok, this is not a linear speedup, but close to it). As we decrease in parallel, we
         # need the mutex here.
         UpdateTraverser.timeToBuildDownRemainingMutex.synchronize do
           UpdateTraverser.timeToBuildDownRemaining -= @task.updateDuration / @threadPool.nrOfThreads
           UpdateTraverser.timeToBuildDownRemaining = 0.0 if (UpdateTraverser.timeToBuildDownRemaining < 3.0)
         end
+      end
 
-        if @task.dependencyHadUpdateError() then
-          @task.deleteTargets()
+
+      def daDoRunRunRun()
+        return if UpdateTraverser.abortBuild # do not go on in this case, even if targets would remain, its a hard
+                                             # request (for example user abort from the outside using a signal)
+
+        # first, we handle the case of an update error in a dependency
+        if @task.dependencyHadUpdateError() or @noMoreUpdates then
+          @task.deleteTargets() # in which case we only delete targets
           @task.setErrorState() # set update error on this task too, as a dependency had an error (ERROR PROPAGATION)
         else
-
-          # do we need to update?
-          if (@task.dependencies.empty? or @task.needsUpdate()) and not UpdateTraverser.abortBuild then
+          # now check additionally, if we really need to update?
+          if @task.dependencies.empty? or @task.needsUpdate() then # leaf task or need update
             # we update expected duration when task is updated, so that only the last measured time is used the next time
             t1 = Time.now
             # we always delete targets before update, Task classes that do not want this, should overwrite the function
@@ -1040,13 +1049,9 @@ module Makr
             @task.update()
             @task.updateDuration = (Time.now - t1)
             # check for update error
-            if @task.state then # no error
-              @build.registerPostUpdate(@task)
-            else
-              UpdateTraverser.abortBuild = true if @stopOnFirstError
-            end
+            @noMoreUpdates = (not @task.state) and @stopOnFirstError
+            @build.registerPostUpdate(@task)
           end
-
         end
 
         @task.dependentTasks.each do |dependentTask|
@@ -1055,7 +1060,7 @@ module Makr
               # if we are the last thread to reach the dependent task, we will run the next thread on it
               dependentTask.dependenciesUpdatedCount = dependentTask.dependenciesUpdatedCount + 1
               if (dependentTask.dependenciesUpdatedCount == dependentTask.dependencies.size) then
-                updater = Updater.new(dependentTask, @build, @threadPool, @stopOnFirstError)
+                updater = Updater.new(dependentTask, @build, @threadPool, @stopOnFirstError, @noMoreUpdates)
                 @threadPool.execute {updater.run()}
               end
             end
@@ -1087,7 +1092,7 @@ module Makr
       collectedTasksWithNoDeps.uniq!
       Makr.log.info("collectedTasksWithNoDeps.size: " + collectedTasksWithNoDeps.size.to_s)
       collectedTasksWithNoDeps.each do |noDepsTask|
-        updater = Updater.new(noDepsTask, build, @threadPool, build.stopOnFirstError)
+        updater = Updater.new(noDepsTask, build, @threadPool, build.stopOnFirstError, false)
         @threadPool.execute {updater.run()}
       end
       @threadPool.join()
@@ -1434,7 +1439,7 @@ module Makr
   def Makr.makeDir(dir, additionalArguments = getArgs().arguments.clone)
 
     # check if build was aborted before proceeding
-    return if UpdateTraverser.abortBuild 
+    return if UpdateTraverser.abortBuild
 
     # check, if we already made this subdir (this helps avoiding multiple build calls on dependent subdirs)
     checkDir = Dir.pwd + "/" + dir
@@ -1525,24 +1530,24 @@ module Makr
 
 
 
-  
-  
-  
-  
-  
-  
-  
+
+
+
+
+
+
+
   # utility function to reduce a build's load on the system (using renice and ionice (Linux only))
   def Makr.doNiceBuild()
     system("renice -n 19 -p #{Process.pid};ionice -c 3 -p #{Process.pid}")
   end
-  
-  
-  
-  
-  
-  
-  
+
+
+
+
+
+
+
 
 
 end     # end of module makr ######################################################################################
