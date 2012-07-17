@@ -1,6 +1,6 @@
 
 
-# This extension provides classes enabling the compilation of source files, construction of binaries, dynamic and static 
+# This extension provides classes enabling the compilation of source files, construction of binaries, dynamic and static
 # libraries with the standard GNU tool chain part of many important linux distributions
 module Makr
 
@@ -274,7 +274,7 @@ module Makr
 
 
 
-  
+
 
 
   # Linking tasks follow.
@@ -560,12 +560,12 @@ module Makr
   class ProgramTask < Task
 
     # identifies the binary to be build, wants full path as usual
-    attr_reader    :programName  
+    attr_reader    :programName
     # Array of String, specifying the path + file name to additional static libs,
     # these are linked last in the order of this Array, any strange static lib
     # dependencies (like necessary multiple inclusion) may be solved using this
     # variable.
-    attr_accessor  :extraStaticLibs, :useStaticLibsGroup
+    attr_accessor  :extraStaticLibs, :useStaticLibsGroup, :useGoldLinker
 
 
     # make a unique name for ProgramTasks out of the programName which is to be compiled
@@ -632,6 +632,7 @@ module Makr
 
       @extraStaticLibs = Array.new # for static libs specified by user
       @useStaticLibsGroup = true
+      @useGoldLinker = false
 
       Makr.log.debug("made ProgramTask with @name=\"" + @name + "\"")
     end
@@ -670,9 +671,18 @@ module Makr
       @state = nil # first set state to unsuccessful build
 
       # build compiler command and execute it
-      linkCommand = makeLinkerString() + " -o " + @programName + makeInputFilesString() + makeOptionsString()
+
+      # first construct gold linker string if wanted (this is just about adding
+      # a linker path to g++ using the -B option)
+      useGoldLinkerString = String.new
+      useGoldLinkerString = " -B#{$makrExtensionsDir}" if useGoldLinker
+
+      linkCommand = makeLinkerString() + useGoldLinkerString + " -o " + @programName +
+                    makeInputFilesString() + makeOptionsString()
+
       # present command
       Makr.log.info("Building ProgramTask \"" + @name + "\"\n\t" + linkCommand)
+      # execute it
       successful = system(linkCommand)
       Makr.log.error("Error in ProgramTask #{@name}") if not successful
       @targetDep.update() # update file information on the compiled target in any case

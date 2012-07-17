@@ -1,2 +1,3 @@
 #!/bin/bash
+echo "Using gold linker script: <Makr-Dir>/extensions/ld"
 gold "$@"
