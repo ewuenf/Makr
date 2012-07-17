@@ -933,6 +933,37 @@ module Makr
   # It can be used stand-alone, but typically calling Build::build() is the standard way to do it.
   class UpdateTraverser
 
+    #################  Build failure behaviour: (what to delete upon unsuccessful build) ######################
+    #
+    #   -> for sure the current task's target
+    #
+    #   -> but not the targets of further dependant tasks in the DAG, rationale:
+    #
+    #     -> if the user would be building a single file, he would not expect that upon failure
+    #        all dependant targets are build, because he also would not expect that upon success
+    #        all dependant targets are build too, as they would need to be to reflect the changes
+    #
+    #     -> if a user has several projects with interdependencies not reflected in a Makrfile.rb,
+    #        he is responsible anyway to start the rebuild manually in these other projects
+    #
+    #     -> the default target should be the "root" of the DAG and cover all dependencies
+    #        (any additional "root" is up to the user to be build accordingly). A standard
+    #        build structure is like this.
+    #
+    #     -> if the current build fails, mainly the target is of interest and thus only this
+    #        current target should be deleted, if the build fails.
+    #
+    #     -> If we were very cautious, the build should always start from the leaves and build
+    #        the whole DAG where necessary and no intermediate targets could be selected (this
+    #        is the way the "tup" build system behaves as far as I know). If we just want single
+    #        file builds, this seems overkill.
+    #
+    #     -> The choice is still up to the user to disallow single file builds and always build
+    #        through completely (this could be an option in the users IDE), thus largely avoiding
+    #        dependency issues. As a build library this should not be in the basic design, but
+    #        rather be a choice of conventions
+
+
     # this class variable is used to realize cooperative build abort, see Makr::abortBuild()
     @@abortBuild = false
     def UpdateTraverser.abortBuild
