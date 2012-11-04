@@ -1,3 +1,4 @@
 #!/bin/bash
-echo "Using gold linker script: <Makr-Dir>/extensions/ld"
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+echo "[Makr - Notice from shell script] Using gold linker via wrapper script: $DIR/ld"
 gold "$@"
