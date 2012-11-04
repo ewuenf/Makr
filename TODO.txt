@@ -7,4 +7,6 @@ TODO:
   -> make a really simple standard project class, kind of declarative
   -> include gold and clang (with new extensions)
   -> consider using yajl-ruby over Marshal.dump for increased speed and readability of cache file
+  -> if Makrfile.rb is changed, detect that and WARN or rebuild from scratch?
+
 
