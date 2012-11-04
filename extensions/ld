@@ -1,4 +1,16 @@
 #!/bin/bash
+
+# first some general note to the user
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-echo "[Makr - Notice from shell script] Using gold linker via wrapper script: $DIR/ld"
-gold "$@"
+echo "[Makr - Notice from shell script]: Using gold linker via wrapper script: $DIR/ld"
+
+# then check for gold in user path and give an appropriate message if not found
+which gold > /dev/null
+if [ $? -ne 0 ]; then
+  echo "[Makr - ATTENTION]: gold linker binary is not found in your path!"
+  exit 1
+else
+  # if gold is found, just execute it with all arguments given to this script
+  gold "$@"
+fi
+
