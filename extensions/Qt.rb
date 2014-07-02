@@ -46,14 +46,14 @@ module Makr
       if @config then
         Makr.log.debug("MocTask " + @name + ": config name is: \"" + @config.name + "\"")
         if (not @config["moc"]) then
-          Makr.log.warn("MocTask " + @name + ": no moc binary given, using moc in path")
+          Makr.log.debug("MocTask " + @name + ": no moc binary given, using moc in path")
           callString = "moc "
         else
           callString = @config["moc"] + " "
         end
         callString += @config["moc.flags"] + " " if @config["moc.flags"] # add other options
       else
-        Makr.log.warn("MocTask " + @name + ": no config given, using default bare moc")
+        Makr.log.debug("MocTask " + @name + ": no config given, using default bare moc")
         callString = "moc "
       end
       return callString
@@ -223,14 +223,14 @@ module Makr
       if @config then
         Makr.log.debug("UicTask " + @name + ": config name is: \"" + @config.name + "\"")
         if (not @config["uic"]) then
-          Makr.log.warn("UicTask " + @name + ": no uic binary given, using uic in path")
+          Makr.log.debug("UicTask " + @name + ": no uic binary given, using uic in path")
           callString = "uic "
         else
           callString = @config["uic"] + " "
         end
         callString += @config["uic.flags"] + " " if @config["uic.flags"] # add other options
       else
-        Makr.log.warn("UicTask " + @name + ": no config given, using default bare uic")
+        Makr.log.debug("UicTask " + @name + ": no config given, using default bare uic")
         callString = "uic "
       end
       return callString
