@@ -224,8 +224,8 @@ module Makr
     end
 
 
-    def postUpdate()
-      buildDependencies()  # assuming we have called the compiler already in update giving us the deps strings
+    def postUpdate()      
+      buildDependencies() # needs to be called even if update was not successful
       super
     end
 
