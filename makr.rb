@@ -31,7 +31,7 @@ require 'stringio'
 
 
 
-# (hacky) workaround for marshalling all classes of Makr without caring for Mutexes that would
+# HACK workaround for marshalling all classes of Makr without caring for Mutexes that would
 # otherwise kill the marshalling (Marshalling is done with Makr::Build instances)
 class Mutex
   def marshal_dump
@@ -50,20 +50,23 @@ end
 module Makr
 
 
+  VERSION = "1.0"
 
 
 
 
 
-
-  # slightly modified from https://github.com/fizx/thread_pool #########################################
+  # adapted from https://github.com/fizx/thread_pool #########################################
   class ThreadPool
     class Executor
+      attr_accessor :stop
       attr_reader :active
 
       def initialize(queue, mutex)
+        @stop = false
+        @active = false
         @thread = Thread.new do
-          loop do
+          while not @stop
             mutex.synchronize { @tuple = queue.shift }
             if @tuple
               args, block = @tuple
@@ -74,69 +77,52 @@ module Makr
                 error e.message
                 error e.backtrace.join("\n")
               end
-              block.complete = true
             else
-              @active = false
-              sleep 0.01
+              sleep 0.1
             end
+            @active = false
           end
         end
       end
 
-      def close
-        @thread.exit
-      end
     end
+    
+    
+    # determines nr of cpu cores on linux
+    def ThreadPool.getNrOfCPUs
+      `grep -c processor /proc/cpuinfo`.to_i  # works only on linux (and maybe most unixes)
+    end    
+    
 
     attr_accessor :queue_limit
     attr_reader :nrOfThreads
 
     # Initialize with nrOfThreads threads to run (if count is not given, all processors of the system will be used)
+    # if nrOfThreads is nil, amount of cpus will be used
+    # If queue_limit is zero, there is no limit
     def initialize(nrOfThreads = nil, queue_limit = 0)
       @mutex = Mutex.new
       @executors = []
       @queue = []
       @queue_limit = queue_limit
-      if nrOfThreads then
-        @nrOfThreads = nrOfThreads
-      else
-        @nrOfThreads = `grep -c processor /proc/cpuinfo`.to_i  # works only on linux (and maybe most unixes)
-      end
+      @nrOfThreads = nrOfThreads
+      @nrOfThreads = ThreadPool.getNrOfCPUs() if not @nrOfThreads
       @nrOfThreads.times { @executors << Executor.new(@queue, @mutex) }
     end
 
-    # Runs the block at some time in the near future
+    # pushes block with args onto the queue (will block when queue_limit is reached)
     def execute(*args, &block)
-      init_completable(block)
-
       if @queue_limit > 0
         sleep 0.01 until @queue.size < @queue_limit
       end
-
       @mutex.synchronize do
         @queue << [args, block]
       end
     end
 
-    # Runs the block at some time in the near future, and blocks until complete
-    def synchronous_execute(*args, &block)
-      execute(*args, &block)
-      sleep 0.01 until block.complete?
-    end
-
-    # Size of the task queue
-    def waiting
-      @queue.size
-    end
-
-    # Size of the thread pool
-    def size
-      @nrOfThreads
-    end
-
-    # Kills all threads
-    def close
-      @executors.each {|e| e.close }
+    # cooperatively stops queue consumption of executors
+    def stopThreadPool
+      @executors.each {|e| e.stop = true }
     end
 
     # Sleeps and blocks until the task queue is finished executing
@@ -146,21 +132,6 @@ module Makr
       end
     end
 
-  protected
-    def init_completable(block)
-      block.extend(Completable)
-      block.complete = false
-    end
-
-    module Completable
-      def complete=(val)
-        @complete = val
-      end
-
-      def complete?
-        !!@complete
-      end
-    end
   end
 
   # end of thread pool implementation ########################################################################################
@@ -467,16 +438,6 @@ module Makr
     end
 
 
-    # used in UpdateTraverser::Updater
-    def dependencyHadUpdateError()
-      return false if @dependencies.empty? # no error, if we have no deps!
-      @dependencies.each do |dep|
-        return true if not dep.state
-      end
-      return false # no dependency had nil state, so everything is fine
-    end
-
-
     def setErrorState()
       @state = nil
     end
@@ -527,7 +488,7 @@ module Makr
 
     # kind of debugging-"to_s"-function
     def printDependencies(prefix = "")
-      Makr.log.info(prefix + @name + " deps size: " + @dependencies.size.to_s)
+      Makr.log.debug(prefix + @name + " deps size: " + @dependencies.size.to_s)
       @dependencies.each do |dep|
         dep.printDependencies(prefix + "  ")
       end
@@ -558,6 +519,9 @@ module Makr
     attr_accessor :fileHash
     # set this to true, if build should stop on first detected error (default behaviour)
     attr_accessor :stopOnFirstError
+    # boolean, defines if targets of tasks get deleted upon error that are dependant on the task that
+    # is chosen as root for the build \see Build.build(). Default value is true.
+    attr_accessor :deleteDependantTargets
     # this is set to true if an error occured during the last build
     attr_reader :buildError
 
@@ -577,6 +541,7 @@ module Makr
       @fileHash = Hash.new                 # convenience member, see above
 
       @stopOnFirstError = true
+      @deleteDependantTargets = true
       @buildError = false
 
       @configs = Hash.new
@@ -681,6 +646,8 @@ module Makr
 
 
     def doPostUpdates()
+      # we only do post updates on those that have been updated, to avoid for example
+      # an unnecssary rebuild of the dependencies of a CompileTask (see in extensions subdir)
       @postUpdates.each do |task|
         task.postUpdate()
       end
@@ -894,10 +861,10 @@ module Makr
     buildPathBuildDumpFileName = buildPathMakrDir + "/build.ruby_marshal_dump"
 
     if not File.file?(buildPathBuildDumpFileName) then
-      Makr.log.warn("could not find or open build dump file, build will be setup new!")
+      Makr.log.debug("could not find or open build dump file, build will be setup new!")
       return Build.new(buildPath)
     end
-    Makr.log.info("found build dump file, now restoring")
+    Makr.log.debug("found build dump file, now restoring")
     File.open(buildPathBuildDumpFileName, "rb") do |dumpFile|
       build = Marshal.load(dumpFile)
       build.cleanTaskHashCache()
@@ -935,33 +902,12 @@ module Makr
 
     #################  Build failure behaviour: (what to delete upon unsuccessful build) ######################
     #
-    #   -> for sure the current task's target
+    #   -> for sure all dependant targets up to the currently selected root task in the DAG (which may
+    #      only be a single object file from a single source file - aka known as "single file compile")
     #
-    #   -> but not the targets of further dependant tasks in the DAG, rationale:
+    #   -> deleting the dependant targets up to the root of the DAG is enabled by default for safety
+    #      concerns but is an option settable by the user \see Build.deleteDependantTargets
     #
-    #     -> if the user would be building a single file, he would not expect that upon failure
-    #        all dependant targets are build, because he also would not expect that upon success
-    #        all dependant targets are build too, as they would need to be to reflect the changes
-    #
-    #     -> if a user has several projects with interdependencies not reflected in a Makrfile.rb,
-    #        he is responsible anyway to start the rebuild manually in these other projects
-    #
-    #     -> the default target should be the "root" of the DAG and cover all dependencies
-    #        (any additional "root" is up to the user to be build accordingly). A standard
-    #        build structure is like this.
-    #
-    #     -> if the current build fails, mainly the target is of interest and thus only this
-    #        current target should be deleted, if the build fails.
-    #
-    #     -> If we were very cautious, the build should always start from the leaves and build
-    #        the whole DAG where necessary and no intermediate targets could be selected (this
-    #        is the way the "tup" build system behaves as far as I know). If we just want single
-    #        file builds, this seems overkill.
-    #
-    #     -> The choice is still up to the user to disallow single file builds and always build
-    #        through completely (this could be an option in the users IDE), thus largely avoiding
-    #        dependency issues. As a build library this should not be in the basic design, but
-    #        rather be a choice of conventions
 
 
     # this class variable is used to realize cooperative build abort, see Makr::abortBuild()
@@ -993,19 +939,17 @@ module Makr
       @@timeToBuildDownRemainingMutex
     end
 
+    class UpdaterGlobalVariables
+      attr_accessor :build, :threadPool, :stopOnFirstError, :noMoreUpdates
+    end
 
     # nested class representing a single task update, executed in a thread pool
     class Updater
 
-      # we carry around various references to other objects
-      def initialize(task, build, threadPool, stopOnFirstError, noMoreUpdates)
+      # we carry around various references to other objects in updaterGlobalVariables
+      def initialize(task, updaterGlobalVariables)
         @task = task
-        @build = build
-        @threadPool = threadPool
-        @stopOnFirstError = stopOnFirstError # tells us, that we stop, if an error occurs
-        @noMoreUpdates = noMoreUpdates # indicates, that an error occured and @stopOnFirstError is true,
-                                       # so we do not make updates any longer, but just delete targets
-                                       # and set error state (see below)
+        @updaterGlobalVariables = updaterGlobalVariables
       end
 
 
@@ -1022,10 +966,10 @@ module Makr
         daDoRunRunRun() # see immediately below
 
         # as we have done a task (wether it was updated or not doesnt matter), we want to decrease the timeToBuildDownRemaining
-        # we scale by the nrOfThreads employed (ok, this is not a linear speedup, but close to it). As we decrease in parallel, we
-        # need the mutex here.
+        # we scale by the nrOfThreads employed (ok, this is not a linear speedup, but close to it). As we decrease in parallel,
+        # we need the mutex here.
         UpdateTraverser.timeToBuildDownRemainingMutex.synchronize do
-          UpdateTraverser.timeToBuildDownRemaining -= @task.updateDuration / @threadPool.nrOfThreads
+          UpdateTraverser.timeToBuildDownRemaining -= @task.updateDuration / @updaterGlobalVariables.threadPool.nrOfThreads
           UpdateTraverser.timeToBuildDownRemaining = 0.0 if (UpdateTraverser.timeToBuildDownRemaining < 3.0)
         end
       end
@@ -1034,9 +978,10 @@ module Makr
       def daDoRunRunRun()
         return if UpdateTraverser.abortBuild # do not go on in this case, even if targets would remain, its a hard
                                              # request (for example user abort from the outside using a signal)
-
+        
         # first, we handle the case of an update error in a dependency
-        if @task.dependencyHadUpdateError() or @noMoreUpdates then
+        if @updaterGlobalVariables.noMoreUpdates then
+          Makr.log.debug("Only cleanup due to error condition in task #{@task.name}") if @updaterGlobalVariables.noMoreUpdates
           @task.deleteTargets() # in which case we only delete targets
           @task.setErrorState() # set update error on this task too, as a dependency had an error (ERROR PROPAGATION)
         else
@@ -1049,19 +994,26 @@ module Makr
             @task.update()
             @task.updateDuration = (Time.now - t1)
             # check for update error
-            @noMoreUpdates = (not @task.state) and @stopOnFirstError
-            @build.registerPostUpdate(@task)
+            @updaterGlobalVariables.noMoreUpdates = (not @task.state) and @updaterGlobalVariables.stopOnFirstError
+            @updaterGlobalVariables.build.registerPostUpdate(@task) # postUpdate is unconditional on all update()'d tasks
           end
         end
 
         @task.dependentTasks.each do |dependentTask|
           dependentTask.mutex.synchronize do
-            if dependentTask.updateMark then # only work on dependent tasks that want to be updated
+            # we only ascend to dependent tasks that want to be updated or in case of an error condition,
+            # we ascend for target deletion if wanted (build.deleteDependantTargets)
+            goOnDespiteMissingUpdateMark = @updaterGlobalVariables.noMoreUpdates and 
+                                           @updaterGlobalVariables.build.deleteDependantTargets
+            if dependentTask.updateMark or goOnDespiteMissingUpdateMark then 
               # if we are the last thread to reach the dependent task, we will run the next thread on it
               dependentTask.dependenciesUpdatedCount = dependentTask.dependenciesUpdatedCount + 1
               if (dependentTask.dependenciesUpdatedCount == dependentTask.dependencies.size) then
-                updater = Updater.new(dependentTask, @build, @threadPool, @stopOnFirstError, @noMoreUpdates)
-                @threadPool.execute {updater.run()}
+                if @updaterGlobalVariables.noMoreUpdates
+                  Makr.log.debug("Ascending with error condition to task #{dependentTask.name}")
+                end
+                updater = Updater.new(dependentTask, @updaterGlobalVariables)
+                @updaterGlobalVariables.threadPool.execute {updater.run()}
               end
             end
           end
@@ -1090,9 +1042,14 @@ module Makr
       collectedTasksWithNoDeps = Array.new
       recursiveMarkAndCollectTasksWithNoDeps(root, collectedTasksWithNoDeps)
       collectedTasksWithNoDeps.uniq!
-      Makr.log.info("collectedTasksWithNoDeps.size: " + collectedTasksWithNoDeps.size.to_s)
+      Makr.log.debug("collectedTasksWithNoDeps.size: " + collectedTasksWithNoDeps.size.to_s)
+      updaterGlobalVariables = UpdaterGlobalVariables.new
+      updaterGlobalVariables.build = build
+      updaterGlobalVariables.threadPool = @threadPool
+      updaterGlobalVariables.stopOnFirstError = build.stopOnFirstError
+      updaterGlobalVariables.noMoreUpdates = false
       collectedTasksWithNoDeps.each do |noDepsTask|
-        updater = Updater.new(noDepsTask, build, @threadPool, build.stopOnFirstError, false)
+        updater = Updater.new(noDepsTask, updaterGlobalVariables)
         @threadPool.execute {updater.run()}
       end
       @threadPool.join()
@@ -1161,6 +1118,8 @@ module Makr
 
 
     def update()
+      Makr.log.debug("ConfigTask update with name = #{@name}")
+      
       # produce a nice message in error case (we want exactly one dependent task)
       raise "[makr] ConfigTask #{name} does not have a dependent task, but needs one!" if (not (dependentTasks.size == 1))
 
@@ -1212,7 +1171,7 @@ module Makr
 
     def mustBeDeleted?()
       if (not File.file?(@fileName)) and (@missingFileIsError) then
-          Makr.log.info("mustBeDeleted?() is true for missing file: " + @fileName)
+          Makr.log.debug("mustBeDeleted?() is true for missing file: " + @fileName)
           return true
       end
       return false
@@ -1571,7 +1530,7 @@ Makr.log.formatter = proc { |severity, datetime, progname, msg|
     "[makr #{severity} #{datetime}] [#{Makr::UpdateTraverser.timeToBuildDownRemaining}]    #{msg}\n"
 }
 # just give short version notice on every startup
-Makr.log << "\n\nmakr version 1.4\n\n"
+Makr.log << "\n\nmakr version #{Makr::VERSION}\n\n"
 # then set the signal handler to allow cooperative aborting of the build process on SIGUSR1 or SIGTERM
 Makr.setSignalHandler()
 # set global vars
