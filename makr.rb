@@ -465,7 +465,7 @@ module Makr
     def preUpdate()
     end
 
-
+    
     # is always called just before the call to update(), if necessary, see UpdateTraverser::Updater::run()
     def deleteTargets()
       return if not @targets
@@ -900,16 +900,6 @@ module Makr
   # It can be used stand-alone, but typically calling Build::build() is the standard way to do it.
   class UpdateTraverser
 
-    #################  Build failure behaviour: (what to delete upon unsuccessful build) ######################
-    #
-    #   -> for sure all dependant targets up to the currently selected root task in the DAG (which may
-    #      only be a single object file from a single source file - aka known as "single file compile")
-    #
-    #   -> deleting the dependant targets up to the root of the DAG is enabled by default for safety
-    #      concerns but is an option settable by the user \see Build.deleteDependantTargets
-    #
-
-
     # this class variable is used to realize cooperative build abort, see Makr::abortBuild()
     # this thing is normally set, if  a user sends a signal to the executing build script,
     # so its a hard and kind of global condition (see Makr.setSignalHandler())
@@ -939,7 +929,8 @@ module Makr
       @@timeToBuildDownRemainingMutex
     end
 
-    class UpdaterGlobalVariables
+    class UpdaterGlobalVariables 
+      # no mutex here, as the usage of noMoreUpdates (see below) is relaxed and safe when ascending in dependency tree
       attr_accessor :build, :threadPool, :stopOnFirstError, :noMoreUpdates
     end
 
@@ -953,38 +944,65 @@ module Makr
       end
 
 
-      # we need to go up the tree with the traversal even in case a dependency did not update or had an error upon update
-      # just to increase the dependenciesUpdatedCount in each marked node so that in case
-      # of the update of a single (sub-)dependency, the node will surely be updated or an update error is handled!
-      # An intermediate node up to the root might not be updated, as it need not, but the algorithm logic
-      # still needs to handle dependent tasks for the above reason.
-      def run()
-        @task.mutex.synchronize do
-          raise "[makr] Unexpectedly starting on a task that needs no update!" if not @task.updateMark # some sanity check
-          @task.updateMark = false
+      # helper func used below
+      def dependencyHadUpdateError(task)
+        return false if task.dependencies.empty? # no error, if we have no deps!
+        task.dependencies.each do |dep|
+          return true if not dep.state
         end
+        return false # no dependency had nil state, so everything is fine
+      end
+
+    
+      #################  Build failure behaviour: (what to delete upon unsuccessful build) ######################
+      #
+      #  * for sure all dependent targets up to the currently selected root task in the DAG (which may only be a 
+      #    single object file a single file compilation)
+      #
+      #  * deleting the dependant targets up to the root of the DAG is enabled by default for safety concerns but 
+      #    is an option settable by the user (\see Build.deleteDependantTargets)
+      #
+
+      # main entry point for task updates (a wrapper around daDoRunRunRun() to handle time measurements)
+      def run()
+        #remember updateDuration
+        expectedUpdateDuration = (@task.updateDuration * 2.0) / 2.0;  # float deep copy hacked
+        
         daDoRunRunRun() # see immediately below
 
-        # as we have done a task (wether it was updated or not doesnt matter), we want to decrease the timeToBuildDownRemaining
-        # we scale by the nrOfThreads employed (ok, this is not a linear speedup, but close to it). As we decrease in parallel,
-        # we need the mutex here.
+        # as we have done a task, we want to decrease the timeToBuildDownRemaining
+        # it does not matter, if it had been updated or just deleted targets, as this countdown
+        # can be discontinuous but should resemble the updateDuration gathered at tree descend
+        # ( \see recursiveMarkAndCollectTasksWithNoDeps )
         UpdateTraverser.timeToBuildDownRemainingMutex.synchronize do
-          UpdateTraverser.timeToBuildDownRemaining -= @task.updateDuration / @updaterGlobalVariables.threadPool.nrOfThreads
+          UpdateTraverser.timeToBuildDownRemaining -= expectedUpdateDuration / @updaterGlobalVariables.threadPool.nrOfThreads
+          # cancel out numeric errors if less than three seconds remaining (otherwise negative build times could occur)
           UpdateTraverser.timeToBuildDownRemaining = 0.0 if (UpdateTraverser.timeToBuildDownRemaining < 3.0)
         end
       end
 
 
       def daDoRunRunRun()
-        return if UpdateTraverser.abortBuild # do not go on in this case, even if targets would remain, its a hard
-                                             # request (for example user abort from the outside using a signal)
+        # sanity check on task update and updateMark reset
+        @task.mutex.synchronize do
+          raise "[makr] Unexpectedly starting on a task that needs no update!" if not @task.updateMark # some sanity check
+          @task.updateMark = false
+        end
         
-        # first, we handle the case of an update error in a dependency
+        # check for hard abort request (i.e. from an outside signal)
+        return if UpdateTraverser.abortBuild
+        
+        # then, we handle the case of an update error and the resulting target deletion (if necessary
         if @updaterGlobalVariables.noMoreUpdates then
-          Makr.log.debug("Only cleanup due to error condition in task #{@task.name}") if @updaterGlobalVariables.noMoreUpdates
-          @task.deleteTargets() # in which case we only delete targets
-          @task.setErrorState() # set update error on this task too, as a dependency had an error (ERROR PROPAGATION)
-        else
+          Makr.log.debug("No more update due to error condition in task #{@task.name}")
+          if dependencyHadUpdateError(@task) then # only delete targets if there really was an error in a dependency
+            Makr.log.debug("Cleanup due to error condition in dependencies in task #{@task.name}")
+            @task.deleteTargets() # in which case we only delete targets
+            @task.setErrorState() # set update error on this task too, as a dependency had an error (ERROR PROPAGATION)
+          end
+        
+        else  # start of ********* standard update case  *****************
+        
           # now check additionally, if we really need to update?
           if @task.dependencies.empty? or @task.needsUpdate() then # leaf task or need update
             # we update expected duration when task is updated, so that only the last measured time is used the next time
@@ -992,24 +1010,32 @@ module Makr
             # we always delete targets before update, Task classes that do not want this, should overwrite the function
             @task.deleteTargets()
             @task.update()
-            @task.updateDuration = (Time.now - t1)
-            # check for update error
-            @updaterGlobalVariables.noMoreUpdates = (not @task.state) and @updaterGlobalVariables.stopOnFirstError
-            @updaterGlobalVariables.build.registerPostUpdate(@task) # postUpdate is unconditional on all update()'d tasks
+            @task.updateDuration = (Time.now - t1) if @task.state # do only record time if successful update
+            # check for update error and if necessary, stop further compilation (if @updaterGlobalVariables.noMoreUpdates
+            # is already true, we need to keep it true)
+            @updaterGlobalVariables.noMoreUpdates |= (not @task.state) and @updaterGlobalVariables.stopOnFirstError
+            # postUpdate is unconditional on all update()'d tasks
+            @updaterGlobalVariables.build.registerPostUpdate(@task)
           end
-        end
+        end   # end of ++********* standard update case  *****************
 
+        # ascending is independent of updating (because of eventually necessary target deletion)
         @task.dependentTasks.each do |dependentTask|
           dependentTask.mutex.synchronize do
             # we only ascend to dependent tasks that want to be updated or in case of an error condition,
             # we ascend for target deletion if wanted (build.deleteDependantTargets)
+            # the usage of noMoreUpdates is thread-safe here, because if a dependency failed, it has
+            # set noMoreUpdates correctly, when it gets here (see above) and the failed dependency
+            # will get here before the ascend happens. Its sibling may be executed due to race conditions
+            # but this does not matter as far as dependencies are concerned and usually only comprises
+            # nrOfThreads siblings at maximum
             goOnDespiteMissingUpdateMark = @updaterGlobalVariables.noMoreUpdates and 
                                            @updaterGlobalVariables.build.deleteDependantTargets
             if dependentTask.updateMark or goOnDespiteMissingUpdateMark then 
               # if we are the last thread to reach the dependent task, we will run the next thread on it
               dependentTask.dependenciesUpdatedCount = dependentTask.dependenciesUpdatedCount + 1
               if (dependentTask.dependenciesUpdatedCount == dependentTask.dependencies.size) then
-                if @updaterGlobalVariables.noMoreUpdates
+                if @updaterGlobalVariables.noMoreUpdates then
                   Makr.log.debug("Ascending with error condition to task #{dependentTask.name}")
                 end
                 updater = Updater.new(dependentTask, @updaterGlobalVariables)
