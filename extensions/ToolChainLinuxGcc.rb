@@ -193,7 +193,8 @@ module Makr
 
       # construct compiler command and execute it
       compileCommand = makeCompileCommand()
-      Makr.log.info("CompileTask #{@name}: Executing compiler\n\t" + compileCommand)
+      Makr.log.info("Compiling #{@fileName}")
+      Makr.log.debug("CompileTask #{@name} is executing compiler:\n\t" + compileCommand)
 
       # we use a pipe here to protect the user from interleaved output, just gathering
       # compiler output ourselves and then print out synchronously. Therefore, we
@@ -204,18 +205,19 @@ module Makr
       successful = ($?.exitstatus == 0) # exit status is different from zero upon compile error
 
       if not successful then  # check if we had a compiler error
-        Makr.log.error("Error in CompileTask #{@name}:\n\n" + compilerOutput)
+        Makr.log.error("Errors compiling #{@fileName}:\n\n" + compilerOutput)
       elsif not compilerOutput.empty? then # no compiler error, but compiler output (typically warnings)
-        Makr.log.warn("Warnings in CompileTask #{@name}:\n\n" + compilerOutput)
+        Makr.log.warn("Warnings compiling #{@fileName}:\n\n" + compilerOutput)
       else
-        # we only do debug output here, for not to clutter the build output
+        # we only do debug output in this case, for not to clutter the build output
         Makr.log.debug("Successfully completed CompileTask #{@name}")
       end
 
       @compileTargetDep.update() # update file information on the compiled target in any case
 
-      # compiler generated deps, we read them back in here already, as we want to have em in OS cache,
-      # parsing still is done in postUpdate, to not modify the tree
+      # compiler generated deps, we read them back in here already for performance reasons, 
+      # as we assume them to be in OS cache still, parsing still is done in postUpdate, to not modify
+      # the tree before update finishes
       if File.exist?(@objectFileName + ".d") then
         @dependencyLines = File.open(@objectFileName + ".d").readlines
       end
@@ -225,7 +227,7 @@ module Makr
 
 
     def postUpdate()      
-      buildDependencies() # needs to be called even if update was not successful
+      buildDependencies() # needs to be called even if update was not successful !!
       super
     end
 
@@ -400,9 +402,10 @@ module Makr
         linkCommand += " " + dep.objectFileName if dep.kind_of?(CompileTask)
       end
       linkCommand += makeOptionsString() + " -o " + @libFileName
-      Makr.log.info("Building DynamicLibTask #{@name}\n\t" + linkCommand)
+      Makr.log.info("Building dynamic lib #{@libFileName}")
+      Makr.log.debug("Building DynamicLibTask #{@name}\n\t" + linkCommand)
       successful = system(linkCommand)
-      Makr.log.error("Error in DynamicLibTask #{@name}") if not successful
+      Makr.log.error("Errors building dynamic lib #{@libFileName}") if not successful
       @libTargetDep.update() # update file information on the compiled target in any case
 
       # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
@@ -507,9 +510,10 @@ module Makr
         # we only want CompileTask dependencies from which we use the objectFileName
         linkCommand += " " + dep.objectFileName if dep.kind_of?(CompileTask)
       end
-      Makr.log.info("Building StaticLibTask \"#{name}\"\n\t" + linkCommand)
+      Makr.log.info("Building static lib #{@libFileName}")
+      Makr.log.debug("Building StaticLibTask \"#{@name}\"\n\t" + linkCommand)
       successful = system(linkCommand)
-      Makr.log.error("Error in StaticLibTask #{@name}") if not successful
+      Makr.log.error("Errors building static lib #{@libFileName}") if not successful
       @libTargetDep.update() # update file information on the compiled target in any case
 
       # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
@@ -681,10 +685,11 @@ module Makr
                     makeInputFilesString() + makeOptionsString()
 
       # present command
-      Makr.log.info("Building ProgramTask \"" + @name + "\"\n\t" + linkCommand)
+      Makr.log.info("Building program #{@programName}")
+      Makr.log.debug("Building ProgramTask \"#{@name}\"\n\t" + linkCommand)
       # execute it
       successful = system(linkCommand)
-      Makr.log.error("Error in ProgramTask #{@name}") if not successful
+      Makr.log.error("Errors building program #{@programName}") if not successful
       @targetDep.update() # update file information on the compiled target in any case
 
       # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)

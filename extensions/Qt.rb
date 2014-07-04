@@ -109,9 +109,10 @@ module Makr
 
       # construct compiler command and execute it
       mocCommand = makeMocCallString() + " -o " + @mocFileName + " " + @fileName
-      Makr.log.info("Executing moc in MocTask: \"" + @name + "\"\n\t" + mocCommand)
+      Makr.log.info("Executing moc on #{@fileName}")
+      Makr.log.debug("Executing moc in MocTask: \"" + @name + "\"\n\t" + mocCommand)
       successful = system(mocCommand)
-      Makr.log.error("Error in MocTask #{@name}") if not successful
+      Makr.log.error("Errors executing moc on #{@fileName}") if not successful
       @mocTargetDep.update() # update file information on the compiled target in any case
 
       # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
@@ -271,9 +272,10 @@ module Makr
 
       # construct compiler command and execute it
       uicCommand = makeUicCallString() + " -o " + @uicFileName + " " + @fileName
-      Makr.log.info("Executing uic in UicTask: \"" + @name + "\"\n\t" + uicCommand)
+      Makr.log.info("Executing uic on #{@fileName}")
+      Makr.log.debug("Executing uic in UicTask: \"" + @name + "\"\n\t" + uicCommand)
       successful = system(uicCommand)
-      Makr.log.error("Error in UicTask #{@name}") if not successful
+      Makr.log.error("Errors executing uic on #{@fileName}") if not successful
       @uicTargetDep.update() # update file information on the compiled target in any case
 
       # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
