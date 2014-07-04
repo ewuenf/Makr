@@ -109,10 +109,15 @@ module Makr
 
       # construct compiler command and execute it
       mocCommand = makeMocCallString() + " -o " + @mocFileName + " " + @fileName
-      Makr.log.info("Executing moc on #{@fileName}")
-      Makr.log.debug("Executing moc in MocTask: \"" + @name + "\"\n\t" + mocCommand)
+      
+      # output is colorized using ANSI escape codes (see also http://stackoverflow.com/questions/1489183/colorized-ruby-output)
+      Makr.log.info("Executing moc on \033[32m#{@fileName}\033[0m")
+      Makr.log.debug("Executing moc in MocTask \033[32m#{@name}\033[0m\n\t" + mocCommand)
+
       successful = system(mocCommand)
-      Makr.log.error("Errors executing moc on #{@fileName}") if not successful
+
+      Makr.log.error("\033[31mErrors\033[0m executing moc on #{@fileName}") if not successful
+
       @mocTargetDep.update() # update file information on the compiled target in any case
 
       # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
@@ -272,10 +277,15 @@ module Makr
 
       # construct compiler command and execute it
       uicCommand = makeUicCallString() + " -o " + @uicFileName + " " + @fileName
-      Makr.log.info("Executing uic on #{@fileName}")
-      Makr.log.debug("Executing uic in UicTask: \"" + @name + "\"\n\t" + uicCommand)
+
+      # output is colorized using ANSI escape codes (see also http://stackoverflow.com/questions/1489183/colorized-ruby-output)
+      Makr.log.info("Executing uic on \033[32m#{@fileName}\033[0m")
+      Makr.log.debug("Executing uic in UicTask \033[32m#{@name}\033[0m\n\t" + uicCommand)
+
       successful = system(uicCommand)
-      Makr.log.error("Errors executing uic on #{@fileName}") if not successful
+
+      Makr.log.error("\033[31mErrors\033[0m executing uic on #{@fileName}") if not successful
+
       @uicTargetDep.update() # update file information on the compiled target in any case
 
       # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)

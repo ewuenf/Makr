@@ -190,11 +190,13 @@ module Makr
         Makr.log.error("generated file is missing: #{@fileName}")
         return false
       end
-
+      
       # construct compiler command and execute it
       compileCommand = makeCompileCommand()
-      Makr.log.info("Compiling #{@fileName}")
-      Makr.log.debug("CompileTask #{@name} is executing compiler:\n\t" + compileCommand)
+      
+      # output is colorized using ANSI escape codes (see also http://stackoverflow.com/questions/1489183/colorized-ruby-output)
+      Makr.log.info("Compiling \033[32m#{@fileName}\033[0m")
+      Makr.log.debug("CompileTask \033[32m#{@name}\033[0m is executing compiler:\n\t" + compileCommand)
 
       # we use a pipe here to protect the user from interleaved output, just gathering
       # compiler output ourselves and then print out synchronously. Therefore, we
@@ -204,10 +206,11 @@ module Makr
       compilerPipe.close
       successful = ($?.exitstatus == 0) # exit status is different from zero upon compile error
 
+      # output is colorized using ANSI escape codes (see also http://stackoverflow.com/questions/1489183/colorized-ruby-output)
       if not successful then  # check if we had a compiler error
-        Makr.log.error("Errors compiling #{@fileName}:\n\n" + compilerOutput)
+        Makr.log.error("\033[31mErrors\033[0m compiling #{@fileName}:\n\n" + compilerOutput)
       elsif not compilerOutput.empty? then # no compiler error, but compiler output (typically warnings)
-        Makr.log.warn("Warnings compiling #{@fileName}:\n\n" + compilerOutput)
+        Makr.log.warn("\033[31mWarnings\033[0m compiling #{@fileName}:\n\n" + compilerOutput)
       else
         # we only do debug output in this case, for not to clutter the build output
         Makr.log.debug("Successfully completed CompileTask #{@name}")
@@ -402,10 +405,14 @@ module Makr
         linkCommand += " " + dep.objectFileName if dep.kind_of?(CompileTask)
       end
       linkCommand += makeOptionsString() + " -o " + @libFileName
-      Makr.log.info("Building dynamic lib #{@libFileName}")
-      Makr.log.debug("Building DynamicLibTask #{@name}\n\t" + linkCommand)
+
+      # output is colorized using ANSI escape codes (see also http://stackoverflow.com/questions/1489183/colorized-ruby-output)
+      Makr.log.info("Building dynamic lib \033[32m#{@libFileName}\033[0m")
+      Makr.log.debug("Building DynamicLibTask \033[32m#{@name}\033[0m\n\t" + linkCommand)
+      
       successful = system(linkCommand)
-      Makr.log.error("Errors building dynamic lib #{@libFileName}") if not successful
+      
+      Makr.log.error("\033[31mErrors\033[0m building dynamic lib #{@libFileName}") if not successful
       @libTargetDep.update() # update file information on the compiled target in any case
 
       # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
@@ -510,10 +517,15 @@ module Makr
         # we only want CompileTask dependencies from which we use the objectFileName
         linkCommand += " " + dep.objectFileName if dep.kind_of?(CompileTask)
       end
-      Makr.log.info("Building static lib #{@libFileName}")
-      Makr.log.debug("Building StaticLibTask \"#{@name}\"\n\t" + linkCommand)
+      
+      # output is colorized using ANSI escape codes (see also http://stackoverflow.com/questions/1489183/colorized-ruby-output)
+      Makr.log.info("Building static lib \033[32m#{@libFileName}\033[0m")
+      Makr.log.debug("Building StaticLibTask \033[32m#{@name}\033[0m\n\t" + linkCommand)
+      
       successful = system(linkCommand)
-      Makr.log.error("Errors building static lib #{@libFileName}") if not successful
+      
+      Makr.log.error("\033[31mErrors\033[0m building static lib #{@libFileName}") if not successful
+
       @libTargetDep.update() # update file information on the compiled target in any case
 
       # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
@@ -684,12 +696,14 @@ module Makr
       linkCommand = makeLinkerString() + useGoldLinkerString + " -o " + @programName +
                     makeInputFilesString() + makeOptionsString()
 
-      # present command
-      Makr.log.info("Building program #{@programName}")
-      Makr.log.debug("Building ProgramTask \"#{@name}\"\n\t" + linkCommand)
-      # execute it
+      # output is colorized using ANSI escape codes (see also http://stackoverflow.com/questions/1489183/colorized-ruby-output)
+      Makr.log.info("Building program \033[32m#{@programName}\033[0m")
+      Makr.log.debug("Building ProgramTask \033[32m#{@name}\033[0m\n\t" + linkCommand)
+      
       successful = system(linkCommand)
-      Makr.log.error("Errors building program #{@programName}") if not successful
+      
+      Makr.log.error("\033[31mErrors\033[0m building program #{@programName}") if not successful
+
       @targetDep.update() # update file information on the compiled target in any case
 
       # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
