@@ -45,13 +45,13 @@ module Makr
       callString = String.new
       if @config then
         Makr.log.debug("MocTask " + @name + ": config name is: \"" + @config.name + "\"")
-        if (not @config["moc"]) then
+        if @config["moc"].empty? then
           Makr.log.debug("MocTask " + @name + ": no moc binary given, using moc in path")
           callString = "moc "
         else
           callString = @config["moc"] + " "
         end
-        callString += @config["moc.flags"] + " " if @config["moc.flags"] # add other options
+        callString += @config["moc.flags"] + " " if not @config["moc.flags"].empty? # add other options
       else
         Makr.log.debug("MocTask " + @name + ": no config given, using default bare moc")
         callString = "moc "
@@ -68,8 +68,8 @@ module Makr
       suffix = ".moc_gen.cpp"
       # check if user supplied other values via config
       if @config then
-        prefix = @config["moc.filePrefix"] if (@config["moc.filePrefix"])
-        suffix = @config["moc.fileSuffix"] if (@config["moc.fileSuffix"])
+        prefix = @config["moc.filePrefix"] if (not @config["moc.filePrefix"].empty?)
+        suffix = @config["moc.fileSuffix"] if (not @config["moc.fileSuffix"].empty?)
       end
       # double substitution of underscores to prevent name conflicts
       @build.buildPath + "/" + prefix + fileName.gsub('_', '__').gsub('/', '_').gsub('.', '_') + suffix
@@ -228,7 +228,7 @@ module Makr
       callString = String.new
       if @config then
         Makr.log.debug("UicTask " + @name + ": config name is: \"" + @config.name + "\"")
-        if (not @config["uic"]) then
+        if (not @config["uic"].empty?) then
           Makr.log.debug("UicTask " + @name + ": no uic binary given, using uic in path")
           callString = "uic "
         else
