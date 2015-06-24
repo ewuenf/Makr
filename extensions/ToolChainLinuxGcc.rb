@@ -208,9 +208,9 @@ module Makr
 
       # output is colorized using ANSI escape codes (see also http://stackoverflow.com/questions/1489183/colorized-ruby-output)
       if not successful then  # check if we had a compiler error
-        Makr.log.error("\033[31mErrors\033[0m compiling #{@fileName}:\n\n" + compilerOutput)
+        Makr.log.error("\n\n\033[31m\n#\n#\n# Errors compiling #{@fileName}:\n#\n#\n\033[0m\n\n" + compilerOutput + "\n\n\n\n")
       elsif not compilerOutput.empty? then # no compiler error, but compiler output (typically warnings)
-        Makr.log.warn("\033[31mWarnings\033[0m compiling #{@fileName}:\n\n" + compilerOutput)
+        Makr.log.warn("\n\n\033[33m\n#\n#\n# Warnings compiling #{@fileName}:\n#\n#\n\033[0m\n\n" + compilerOutput + "\n\n\n\n")
       else
         # we only do debug output in this case, for not to clutter the build output
         Makr.log.debug("Successfully completed CompileTask #{@name}")
