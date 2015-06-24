@@ -108,20 +108,20 @@ overallSuccess = true
   # check program output
   programPipe = IO.popen("build/myProgram")
   progOutputLines = programPipe.readlines
-  foundAllOuputExpected = currentFileNamesArray.empty?
+  foundAllOutputExpected = currentFileNamesArray.empty?
   currentFileNamesArray.each do |name|
     findArray = progOutputLines.select { |line| line.include?(name + "::f()") }
-    if not (foundAllOuputExpected = (findArray.size == 1)) then
+    if not (foundAllOutputExpected = (findArray.size == 1)) then
       break
     end
   end
 
   puts "Makr run was successful = " + successful.to_s + " and foundAllFiles = " + foundAllFiles.to_s +
-       " and foundAllOuputExpected = " + foundAllOuputExpected.to_s
+       " and foundAllOutputExpected = " + foundAllOutputExpected.to_s
 
-  puts currentFileNamesArray if not foundAllOuputExpected
+  puts currentFileNamesArray if not foundAllOutputExpected
 
-  break if not ( overallSuccess = (successful and foundAllFiles and foundAllOuputExpected) )
+  break if not ( overallSuccess = (successful and foundAllFiles and foundAllOutputExpected) )
   
 end
 
