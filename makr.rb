@@ -187,7 +187,7 @@ module Makr
   class Config
 
     # doubly linked tree (parent and childs), childs used for cleanup (see class Build)
-    attr_reader   :name, :parent, :childs
+    attr_reader   :name, :parent, :childs, :hash
 
 
     def initialize(name, parent = nil) # parent is a config, too
@@ -227,12 +227,16 @@ module Makr
     def copyParent(key = nil)
       return if not @parent
       if key then
-        @hash[key] ||= @parent[key]
+        if @parent[key] then
+          @hash[key] = @parent[key].clone()
+        end
       else
         # collect the complete hash
         # duplicate keyz are resolved in favor of the argument of the merge!-call, which is what we want here
         # (this way we overwrite with the parents keys)
-        @hash.merge!(@parent.hash)
+        newHash = @hash.merge(@parent.hash)
+        @hash.clear()
+        newHash.each_pair {|key, value| @hash[key] = value.clone }
       end
     end
 
