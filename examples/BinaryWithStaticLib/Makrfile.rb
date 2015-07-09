@@ -14,6 +14,7 @@
 # the user through.
 Makr.loadExtension("ToolChainLinuxGcc")
 
+Makr.log.level = Logger::INFO
 
 # decompose arguments
 $arguments = Makr.getArgs()
