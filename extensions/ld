@@ -2,7 +2,7 @@
 
 # first some general note to the user
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-echo "[Makr - Notice from shell script]: Using gold linker via wrapper script: $DIR/ld"
+#echo "[Makr - Notice from shell script]: Using gold linker via wrapper script: $DIR/ld"
 
 # then check for gold in user path and give an appropriate message if not found
 which gold > /dev/null
