@@ -441,6 +441,7 @@ module Makr
     end
     libTask = build.getTask(libTaskName)
     libTask.config = libConfig
+    libTask.clearAll()
     libTask.addDependencies(taskCollection)
     build.defaultTask = libTask # set this as default task in build
     return libTask
@@ -553,6 +554,7 @@ module Makr
     end
     libTask = build.getTask(libTaskName)
     libTask.config = libConfig
+    libTask.clearAll()
     libTask.addDependencies(taskCollection)
     build.defaultTask = libTask # set this as default task in build
     return libTask
@@ -730,6 +732,7 @@ module Makr
     end
     progTask = build.getTask(programTaskName)
     progTask.config = programConfig
+    progTask.clearAll()
     progTask.addDependencies(taskCollection)
     build.defaultTask = progTask # set this as default task in build
     return progTask
