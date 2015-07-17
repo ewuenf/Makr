@@ -1557,7 +1557,14 @@ end     # end of module makr ###################################################
 # first start logger and set start logging level (can of course be changed by user)
 Makr.log.level = Logger::DEBUG
 Makr.log.formatter = proc { |severity, datetime, progname, msg|
-    "[makr #{severity} #{datetime}] [#{Makr::UpdateTraverser.timeToBuildDownRemaining}]    #{msg}\n"
+  # we do this kind of complicated hand-crafted formatting because using string formatting with "%6.2f" did lead to a lockup (wtf)
+  remBuildTime = Makr::UpdateTraverser.timeToBuildDownRemaining.to_s
+  dotIndex = remBuildTime.index('.')
+  if dotIndex == nil then
+    "[makr #{severity} #{datetime}] [#{remBuildTime}.0]    #{msg}\n"
+  else
+    "[makr #{severity} #{datetime}] [#{remBuildTime[0..(dotIndex + 1)]}]    #{msg}\n"
+  end
 }
 # just give short version notice on every startup
 Makr.log << "\n\nmakr version #{Makr::VERSION}\n\n"
