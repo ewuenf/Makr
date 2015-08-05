@@ -213,7 +213,7 @@ module Makr
                         "#{compilerOutput}\n\n\n\n"
                       )
       elsif not compilerOutput.empty? then # no compiler error, but compiler output (typically warnings)
-        Makr.log.warn ( "\n\n\033[33m\n#\n#\n# Warnings compiling #{@fileName}:\n#\n#\n\033[0m\n\n" + 
+        Makr.log.warn(  "\n\n\033[33m\n#\n#\n# Warnings compiling #{@fileName}:\n#\n#\n\033[0m\n\n" + 
                         "##### using command:\n\n#{compileCommand}\n\n#####\n\n\n" + 
                         "#{compilerOutput}\n\n\n\n"
                       )
