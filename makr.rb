@@ -613,7 +613,7 @@ module Makr
       @buildError = (effectiveTask.state == nil)
 
       Makr.log.info( " \n\n ############################# doing postUpdate() ###########################\n\n\n" )
-      doPostUpdates() if not @buildError
+      doPostUpdates()
 
       # finally give message:
       if not UpdateTraverser.abortBuild and not @buildError then
