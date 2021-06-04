@@ -1442,7 +1442,7 @@ module Makr
     makrFilePath = "./Makrfile.rb"
     if File.exist?(makrFilePath) then
       Makr.pushArgs(Makr::ScriptArguments.new(makrFilePath, additionalArguments))
-      Kernel.load(makrFilePath, true)  # second parameter sayz to wrap an anonymous module around the called script content
+      Kernel.load(makrFilePath)
       popArgs()
     else
       Makr.log.fatal("Cannot find Makrfile-Path " + makrFilePath + " from current working dir " + Dir.pwd + "!")
