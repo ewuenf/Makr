@@ -89,16 +89,16 @@ module Makr
 
       # first we need a dep on the input file
       @inputFileDep = @build.getOrMakeNewTask(@fileName) {FileTask.new(@fileName)}
-      addDependency(@inputFileDep)
+      addDependencyUnique(@inputFileDep)
       
       # now add a dep on the moc output file
       @mocTargetDep = @build.getOrMakeNewTask(@mocFileName) {FileTask.new(@mocFileName, false)}
-      addDependency(@mocTargetDep)
+      addDependencyUnique(@mocTargetDep)
       @targets = [@mocFileName]
 
       # now add another dep on the config
       @configDep = @build.getOrMakeNewTask(ConfigTask.makeName(@name)) {ConfigTask.new(ConfigTask.makeName(@name))}
-      addDependency(@configDep)
+      addDependencyUnique(@configDep)
 
       Makr.log.debug("made MocTask with @name=\"" + @name + "\"")
     end
@@ -257,16 +257,16 @@ module Makr
 
       # first we need a dep on the input file
       @inputFileDep = @build.getOrMakeNewTask(@fileName) {FileTask.new(@fileName)}
-      addDependency(@inputFileDep)
+      addDependencyUnique(@inputFileDep)
 
       # now add a dep on the uic output file
       @uicTargetDep = @build.getOrMakeNewTask(@uicFileName) {FileTask.new(@uicFileName, false)}
-      addDependency(@uicTargetDep)
+      addDependencyUnique(@uicTargetDep)
       @targets = [@uicFileName]
 
       # now add another dep on the config
       @configDep = @build.getOrMakeNewTask(ConfigTask.makeName(@name)) {ConfigTask.new(ConfigTask.makeName(@name))}
-      addDependency(@configDep)
+      addDependencyUnique(@configDep)
 
       Makr.log.debug("made UicTask with @name=\"" + @name + "\"")
     end

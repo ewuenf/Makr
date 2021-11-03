@@ -120,10 +120,10 @@ module Makr
       clearDependencies()
 
       # first we add the constructed dependencies as we simply cleared *all* deps before
-      addDependency(@compileFileDep) if not @fileIsGenerated
-      addDependency(@compileTargetDep)
-      addDependency(@configTaskDep)
-      addDependency(@generatorTaskDep) if @fileIsGenerated
+      addDependencyUnique(@compileFileDep) if not @fileIsGenerated
+      addDependencyUnique(@compileTargetDep)
+      addDependencyUnique(@configTaskDep)
+      addDependencyUnique(@generatorTaskDep) if @fileIsGenerated
 
       return if not @dependencyLines # only go on if we have compiler generated deps
 
@@ -149,16 +149,16 @@ module Makr
         if @build.hasTask?(depFile) then
           task = @build.getTask(depFile)
           if not @dependencies.include?(task)
-            addDependency(task)
+            addDependencyUnique(task)
           end
         elsif (task = @build.getTaskForTarget(depFile)) then
           if not @dependencies.include?(task)
-            addDependency(task)
+            addDependencyUnique(task)
           end
         else
           task = FileTask.new(depFile)
           @build.addTask(depFile, task)
-          addDependency(task)
+          addDependencyUnique(task)
         end
         task.update()
       end
@@ -388,12 +388,12 @@ module Makr
 
       # we need a dep on the lib target
       @libTargetDep = @build.getOrMakeNewTask(@libFileName) {FileTask.new(@libFileName, false)}
-      addDependency(@libTargetDep)
+      addDependencyUnique(@libTargetDep)
       @targets = [@libFileName]
 
       # now add another dependency task on the config
       @configDep = @build.getOrMakeNewTask(ConfigTask.makeName(@name)) {ConfigTask.new(ConfigTask.makeName(@name))}
-      addDependency(@configDep)
+      addDependencyUnique(@configDep)
 
       Makr.log.debug("made DynamicLibTask with @name=\"" + @name + "\"")
     end
@@ -441,8 +441,7 @@ module Makr
     end
     libTask = build.getTask(libTaskName)
     libTask.config = libConfig
-    libTask.clearAll()
-    libTask.addDependencies(taskCollection)
+    libTask.addDependenciesUnique(taskCollection)
     build.defaultTask = libTask # set this as default task in build
     return libTask
   end
@@ -504,12 +503,12 @@ module Makr
 
       # first we need a dependency on the target
       @libTargetDep = @build.getOrMakeNewTask(@libFileName) {FileTask.new(@libFileName, false)}
-      addDependency(@libTargetDep)
+      addDependencyUnique(@libTargetDep)
       @targets = [@libFileName]
 
       # now add another dependency task on the config
       @configDep = @build.getOrMakeNewTask(ConfigTask.makeName(@name)) {ConfigTask.new(ConfigTask.makeName(@name))}
-      addDependency(@configDep)
+      addDependencyUnique(@configDep)
 
       Makr.log.debug("made StaticLibTask with @name=\"" + @name + "\"")
     end
@@ -554,8 +553,7 @@ module Makr
     end
     libTask = build.getTask(libTaskName)
     libTask.config = libConfig
-    libTask.clearAll()
-    libTask.addDependencies(taskCollection)
+    libTask.addDependenciesUnique(taskCollection)
     build.defaultTask = libTask # set this as default task in build
     return libTask
   end
@@ -647,12 +645,12 @@ module Makr
 
       # first we make dependency on the target program file
       @targetDep = @build.getOrMakeNewTask(@programName) {FileTask.new(@programName, false)}
-      addDependency(@targetDep)
+      addDependencyUnique(@targetDep)
       @targets = [@programName]
 
       # now add another dependency task on the config
       @configDep = @build.getOrMakeNewTask(ConfigTask.makeName(@name)) {ConfigTask.new(ConfigTask.makeName(@name))}
-      addDependency(@configDep)
+      addDependencyUnique(@configDep)
 
       @extraStaticLibs = Array.new # for static libs specified by user
       @useStaticLibsGroup = true
@@ -732,8 +730,7 @@ module Makr
     end
     progTask = build.getTask(programTaskName)
     progTask.config = programConfig
-    progTask.clearAll()
-    progTask.addDependencies(taskCollection)
+    progTask.addDependenciesUnique(taskCollection)
     build.defaultTask = progTask # set this as default task in build
     return progTask
   end

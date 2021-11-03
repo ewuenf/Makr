@@ -50,7 +50,7 @@ end
 module Makr
 
 
-  VERSION = "1.0.3"
+  VERSION = "1.0.4"
 
 
 
@@ -366,20 +366,17 @@ module Makr
     end
 
 
-    def addDependency(otherTask)
+    def addDependencyUnique(otherTask)
       if not @dependencies.index(otherTask) then
         @dependencies.push(otherTask)
-        otherTask.dependentTasks.push(self)
-      else
-        # throw an exception ?
-        Makr.log.warn("addDependency: Task with name #{otherTask.name} already exists as a dependency of task #{@name}.")
+        otherTask.dependentTasks.push(self) if not otherTask.dependentTasks.index(self)
       end
     end
 
 
     # convenience function for adding a plethora of tasks
-    def addDependencies(otherTasks)
-      otherTasks.each {|task| addDependency(task) if not @dependencies.index(task) }
+    def addDependenciesUnique(otherTasks)
+      otherTasks.each {|task| addDependencyUnique(task)}
     end
 
 
@@ -1345,7 +1342,7 @@ module Makr
   # On each file in fileCollection, all generators from generatorArray are executed. During this (maybe lengthy) operation,
   # the build could be aborted (for example by user request or fatal generator error). This function returns an array of
   # tasks that have been generated. These are typically added as dependencies to another task (for example a ProgramTask),
-  # by using Task::addDependencies(otherTasks).
+  # by using Task::addDependenciesUnique(otherTasks).
   def Makr.applyGenerators(fileCollection, generatorArray)
     # first check, if we only have a single file
     fileCollection = [Makr.cleanPathName(fileCollection)] if fileCollection.kind_of? String
