@@ -90,7 +90,7 @@ module Makr
       # first we need a dep on the input file
       @inputFileDep = @build.getOrMakeNewTask(@fileName) {FileTask.new(@fileName)}
       addDependencyUnique(@inputFileDep)
-      
+
       # now add a dep on the moc output file
       @mocTargetDep = @build.getOrMakeNewTask(@mocFileName) {FileTask.new(@mocFileName, false)}
       addDependencyUnique(@mocTargetDep)
@@ -109,7 +109,7 @@ module Makr
 
       # construct compiler command and execute it
       mocCommand = makeMocCallString() + " -o " + @mocFileName + " " + @fileName
-      
+
       # output is colorized using ANSI escape codes (see also http://stackoverflow.com/questions/1489183/colorized-ruby-output)
       Makr.log.info("Executing moc on \033[32m#{@fileName}\033[0m")
       Makr.log.debug("Executing moc in MocTask \033[32m#{@name}\033[0m\n\t" + mocCommand)
@@ -121,7 +121,7 @@ module Makr
       @mocTargetDep.update() # update file information on the compiled target in any case
 
       # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
-      @state = concatStateOfDependencies() if successful 
+      @state = concatStateOfDependencies() if successful
     end
 
 
@@ -289,13 +289,13 @@ module Makr
       @uicTargetDep.update() # update file information on the compiled target in any case
 
       # indicate successful update by setting state string to preliminary concat string (set correctly in postUpdate)
-      @state = concatStateOfDependencies() if successful 
+      @state = concatStateOfDependencies() if successful
     end
 
 
     # this task wants to be deleted if the file no longer contains the Q_OBJECT macro (TODO is this correct?)
     def mustBeDeleted?()
-      return (not File.exists?(@fileName))
+      return (not File.exist?(@fileName))
     end
 
   end

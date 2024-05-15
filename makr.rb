@@ -86,13 +86,13 @@ module Makr
       end
 
     end
-    
-    
+
+
     # determines nr of cpu cores on linux
     def ThreadPool.getNrOfCPUs
       `grep -c processor /proc/cpuinfo`.to_i  # works only on linux (and maybe most unixes)
-    end    
-    
+    end
+
 
     attr_accessor :queue_limit
     attr_reader :nrOfThreads
@@ -466,12 +466,12 @@ module Makr
     def preUpdate()
     end
 
-    
+
     # is always called just before the call to update(), if necessary, see UpdateTraverser::Updater::run()
     def deleteTargets()
       return if not @targets
       @targets.each do |target|
-        File.delete target if File.exists? target
+        File.delete target if File.exist? target
       end
     end
 
@@ -930,7 +930,7 @@ module Makr
       @@timeToBuildDownRemainingMutex
     end
 
-    class UpdaterGlobalVariables 
+    class UpdaterGlobalVariables
       # no mutex here, as the usage of noMoreUpdates (see below) is relaxed and safe when ascending in dependency tree
       attr_accessor :build, :threadPool, :stopOnFirstError, :noMoreUpdates
     end
@@ -954,13 +954,13 @@ module Makr
         return false # no dependency had nil state, so everything is fine
       end
 
-    
+
       #################  Build failure behaviour: (what to delete upon unsuccessful build) ######################
       #
-      #  * for sure all dependent targets up to the currently selected root task in the DAG (which may only be a 
+      #  * for sure all dependent targets up to the currently selected root task in the DAG (which may only be a
       #    single object file a single file compilation)
       #
-      #  * deleting the dependant targets up to the root of the DAG is enabled by default for safety concerns but 
+      #  * deleting the dependant targets up to the root of the DAG is enabled by default for safety concerns but
       #    is an option settable by the user (\see Build.deleteDependantTargets)
       #
 
@@ -968,7 +968,7 @@ module Makr
       def run()
         #remember updateDuration
         expectedUpdateDuration = (@task.updateDuration * 2.0) / 2.0;  # float deep copy hacked
-        
+
         daDoRunRunRun() # see immediately below
 
         # as we have done a task, we want to decrease the timeToBuildDownRemaining
@@ -989,10 +989,10 @@ module Makr
           raise "[makr] Unexpectedly starting on a task that needs no update!" if not @task.updateMark # some sanity check
           @task.updateMark = false
         end
-        
+
         # check for hard abort request (i.e. from an outside signal)
         return if UpdateTraverser.abortBuild
-        
+
         # then, we handle the case of an update error and the resulting target deletion (if necessary
         if @updaterGlobalVariables.noMoreUpdates then
           Makr.log.debug("No more update due to error condition in task #{@task.name}")
@@ -1001,9 +1001,9 @@ module Makr
             @task.deleteTargets() # in which case we only delete targets
             @task.setErrorState() # set update error on this task too, as a dependency had an error (ERROR PROPAGATION)
           end
-        
+
         else  # start of ********* standard update case  *****************
-        
+
           # now check additionally, if we really need to update?
           if @task.dependencies.empty? or @task.needsUpdate() then # leaf task or need update
             # we update expected duration when task is updated, so that only the last measured time is used the next time
@@ -1030,9 +1030,9 @@ module Makr
             # will get here before the ascend happens. Its sibling may be executed due to race conditions
             # but this does not matter as far as dependencies are concerned and usually only comprises
             # nrOfThreads siblings at maximum
-            goOnDespiteMissingUpdateMark = @updaterGlobalVariables.noMoreUpdates and 
+            goOnDespiteMissingUpdateMark = @updaterGlobalVariables.noMoreUpdates and
                                            @updaterGlobalVariables.build.deleteDependantTargets
-            if dependentTask.updateMark or goOnDespiteMissingUpdateMark then 
+            if dependentTask.updateMark or goOnDespiteMissingUpdateMark then
               # if we are the last thread to reach the dependent task, we will run the next thread on it
               dependentTask.dependenciesUpdatedCount = dependentTask.dependenciesUpdatedCount + 1
               if (dependentTask.dependenciesUpdatedCount == dependentTask.dependencies.size) then
@@ -1146,7 +1146,7 @@ module Makr
 
     def update()
       Makr.log.debug("ConfigTask update with name = #{@name}")
-      
+
       # produce a nice message in error case (we want exactly one dependent task)
       raise "[makr] ConfigTask #{name} does not have a dependent task, but needs one!" if (not (dependentTasks.size == 1))
 
